@@ -1,0 +1,9 @@
+# LiveTalkAiAgent / simple_chat.py
+sounddevice>=0.5.0
+edge_tts
+websockets
+faster-whisper
+requests
+aiohttp
+numpy
+python-dotenv

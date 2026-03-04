@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alter-Ego Mascot (LiveMode)</title>
+    <style>
+        :root {
+            --primary: #00ddee;
+            --accent: #ff00ff;
+            --bg-glass: rgba(0, 20, 40, 0.7);
+            --border: rgba(0, 221, 238, 0.3);
+            --font: 'Outfit', 'Segoe UI', sans-serif;
+        }
+
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: transparent;
+            cursor: move;
+            -webkit-app-region: drag;
+            font-family: var(--font);
+        }
+
+        /* Glassmorphism Panel Base */
+        .glass-panel {
+            background: var(--bg-glass);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        }
+
+        /* System Status Bar - Sleek & High-Tech */
+        #system-status-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 30px;
+            background: rgba(0, 40, 80, 0.8);
+            backdrop-filter: blur(8px);
+            border-bottom: 1px solid var(--border);
+            z-index: 2000;
+            display: flex;
+            align-items: center;
+            padding: 0 15px;
+            font-size: 10px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            color: var(--primary);
+            -webkit-app-region: drag;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #00ff00;
+            margin-right: 8px;
+            box-shadow: 0 0 8px #00ff00;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+                opacity: 1;
+            }
+
+            50% {
+                transform: scale(1.2);
+                opacity: 0.7;
+            }
+
+            100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        /* Hub Notification - Cyber-Toast */
+        #hub-toast {
+            position: fixed;
+            top: 45px;
+            right: 15px;
+            width: 280px;
+            padding: 12px;
+            color: white;
+            z-index: 2100;
+            transform: translateX(350px);
+            transition: all 0.5s cubic-bezier(0.19, 1, 0.22, 1);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            pointer-events: auto;
+            -webkit-app-region: no-drag;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        }
+
+        #hub-toast.show {
+            transform: translateX(0);
+        }
+
+        #hub-toast .icon {
+            font-size: 24px;
+            text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+        }
+
+        #hub-toast .content {
+            font-size: 13px;
+            line-height: 1.4;
+            font-weight: 500;
+        }
+
+        /* Chat Container - Thought Stream Style */
+        #chat-container {
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 92%;
+            max-height: 180px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            z-index: 999;
+            padding: 15px;
+            overflow-y: auto;
+            pointer-events: auto;
+            -webkit-app-region: no-drag;
+        }
+
+        .chat-log-item {
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            color: #fff;
+            max-width: 85%;
+            animation: slideIn 0.3s ease-out;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Input Area - Integrated HUD */
+        #input-area {
+            position: fixed;
+            bottom: 15px;
+            left: 5%;
+            width: 90%;
+            height: 44px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            z-index: 1001;
+            padding: 0 15px;
+            pointer-events: auto;
+            -webkit-app-region: no-drag;
+        }
+
+        #input-field {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: white;
+            font-size: 14px;
+            outline: none;
+        }
+
+        #send-btn {
+            background: linear-gradient(135deg, var(--primary), #0088ff);
+            border: none;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.2s;
+            cursor: pointer;
+        }
+
+        #send-btn:hover {
+            transform: scale(1.1);
+        }
+
+        #controls {
+            position: fixed;
+            top: 5px;
+            right: 10px;
+            z-index: 2001;
+        }
+
+        #min-btn {
+            color: var(--primary);
+            cursor: pointer;
+            -webkit-app-region: no-drag;
+            font-size: 14px;
+            display: none;
+            /* redundant with status bar one */
+        }
+    </style>
+</head>
+
+<body>
+    <div id="start-prompt">
+        <div style="font-size: 20px;">Alter-Ego Mascot</div>
+        <div style="font-size: 12px; opacity: 0.8; margin-top: 5px;">音声連携を開始するにはボタンを押してください</div>
+        <button id="start-btn">マスコットを起動</button>
+    </div>
+
+    <!-- System Cockpit HUD -->
+    <div id="system-status-bar">
+        <div class="status-dot"></div>
+        <span id="status-text">Alter-Ego Core: Online | Mode: Mascot</span>
+        <div style="flex:1"></div>
+        <button id="mode-switch-btn"
+            style="background:none; border: 1px solid var(--primary); color:var(--primary); font-size:9px; padding:2px 6px; cursor:pointer;-webkit-app-region:no-drag; border-radius:4px; margin-right:10px;">➔
+            Simple Mode</button>
+        <div id="min-btn-bar" style="cursor:pointer;-webkit-app-region:no-drag; margin-right:5px;">－</div>
+    </div>
+
+    <div id="hub-toast" class="glass-panel">
+        <div class="icon">🔔</div>
+        <div class="content">新しい通知があります</div>
+    </div>
+
+    <!-- UI Overlay (Bottom) -->
+    <div id="ui-overlay" style="display:none">Waiting for Brain...</div>
+
+    <!-- Chat Log UI -->
+    <div id="chat-container" class="glass-panel">
+        <!-- Logs will be added here -->
+    </div>
+
+    <!-- Input Area UI -->
+    <div id="input-area" class="glass-panel">
+        <input id="input-field" type="text" placeholder="メッセージを入力..." />
+        <button id="send-btn">➤</button>
+    </div>
+
+    <!-- Controls -->
+    <div id="controls">
+        <div id="min-btn">－</div>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <script async src="https://unpkg.com/es-module-shims@1.3.6/dist/es-module-shims.js"></script>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.154.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.154.0/examples/jsm/",
+                "@pixiv/three-vrm": "https://unpkg.com/@pixiv/three-vrm@2.1.0/lib/three-vrm.module.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+
+        let currentVrm = null;
+        let mouthOpen = 0.0;
+        let ws = null;
+        let currentEmotion = 'neutral';
+
+        // --- UI Elements ---
+        const chatContainer = document.getElementById('chat-container');
+        const inputField = document.getElementById('input-field');
+        const sendBtn = document.getElementById('send-btn');
+        const minBtn = document.getElementById('min-btn');
+
+        // Audio Context for playback & analysis
+        let audioCtx_playback = null;
+        let audioAnalyzer_playback = null;
+
+        function setupWebAudio() {
+            if (!audioCtx_playback) {
+                audioCtx_playback = new (window.AudioContext || window.webkitAudioContext)();
+                audioAnalyzer_playback = audioCtx_playback.createAnalyser();
+                audioAnalyzer_playback.fftSize = 256;
+            }
+            if (audioCtx_playback.state === 'suspended') {
+                audioCtx_playback.resume();
+            }
+        }
+
+        async function playAudio(base64Data) {
+            setupWebAudio();
+            if (audioCtx_playback && audioCtx_playback.state === 'suspended') {
+                await audioCtx_playback.resume();
+            }
+
+            try {
+                const binaryString = window.atob(base64Data);
+                const len = binaryString.length;
+                const bytes = new Uint8Array(len);
+                for (let i = 0; i < len; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+
+                const audioBuffer = await audioCtx_playback.decodeAudioData(bytes.buffer);
+                const source = audioCtx_playback.createBufferSource();
+                source.buffer = audioBuffer;
+
+                source.connect(audioAnalyzer_playback);
+                audioAnalyzer_playback.connect(audioCtx_playback.destination);
+
+                source.start(0);
+            } catch (e) {
+                console.error("Audio Playback Error", e);
+            }
+        }
+
+        function getPlaybackVolume() {
+            if (!audioAnalyzer_playback) return 0;
+            const data = new Uint8Array(audioAnalyzer_playback.frequencyBinCount);
+            audioAnalyzer_playback.getByteFrequencyData(data);
+            let sum = 0;
+            // Focus on vocal range roughly
+            for (let i = 0; i < data.length; i++) sum += data[i];
+            return sum / data.length;
+        }
+
+        function addLog(text, role) {
+            const log = document.createElement('div');
+            log.textContent = text;
+            log.className = 'chat-log-item';
+            log.style.background = role === 'user' ? 'rgba(0,120,255,0.6)' : 'rgba(255,80,120,0.6)';
+            log.style.alignSelf = role === 'user' ? 'flex-end' : 'flex-start';
+
+            chatContainer.appendChild(log);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+            while (chatContainer.children.length > 20) chatContainer.removeChild(chatContainer.firstChild);
+        }
+
+        const sendText = () => {
+            const text = inputField.value.trim();
+            if (text && ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'text_input', text: text }));
+                inputField.value = '';
+                addLog(text, 'user');
+            }
+        };
+
+        sendBtn.addEventListener('click', sendText);
+        inputField.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') sendText();
+            e.stopPropagation();
+        });
+
+        function setupWebSocket() {
+            ws = new WebSocket('ws://localhost:8080');
+
+            ws.onopen = () => {
+                console.log('Connected to Alter-Ego Brain');
+                document.getElementById('ui-overlay').textContent = 'Connected: Brain Online';
+                document.getElementById('ui-overlay').style.color = '#00ff00';
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    if (msg.type === 'user_text') {
+                        // User voice text or echo
+                        // Avoid duplicates if we handled it in sendText, but python echoes voice too
+                        // Let's just allow it for now or dedupe logic if needed
+                        // For voice input, we need this. For text input, we added it optimistically.
+                        // Simple check: if last log is same, maybe skip? But let's keep it simple.
+                        addLog(msg.text, 'user');
+                    }
+                    else if (msg.type === 'audio') {
+                        playAudio(msg.data);
+                        if (msg.text) addLog(msg.text, 'ai');
+                        if (msg.emotion) {
+                            currentEmotion = msg.emotion;
+                            setTimeout(() => { currentEmotion = 'neutral'; }, 3000);
+                        }
+                    }
+                    else if (msg.type === 'hub_alert') {
+                        showHubToast(msg.tag, msg.text);
+                    }
+                } catch (e) { console.error('WS Error:', e); }
+            };
+
+            const toast = document.getElementById('hub-toast');
+            function showHubToast(tag, text) {
+                const iconMap = {
+                    "[URGENT]": "🚨",
+                    "[SLACK]": "📬",
+                    "[GITHUB]": "⚙️",
+                    "[DEVIN]": "🤖",
+                    "[ALERT]": "⚠️",
+                    "[FINANCE]": "💰",
+                    "[SYSTEM_REPORT]": "📊"
+                };
+                toast.querySelector('.icon').textContent = iconMap[tag] || "🔔";
+                toast.querySelector('.content').textContent = text;
+                toast.classList.add('show');
+                setTimeout(() => { toast.classList.remove('show'); }, 6000);
+            }
+
+            ws.onclose = () => {
+                console.log('Disconnected');
+                document.getElementById('ui-overlay').textContent = 'Disconnected: Waiting for Brain...';
+                document.getElementById('ui-overlay').style.color = 'red';
+                setTimeout(setupWebSocket, 2000);
+            };
+        }
+
+        // --- Three.js Setup ---
+        const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setClearColor(0x000000, 0);
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(25, window.innerWidth / window.innerHeight, 0.1, 20.0);
+        camera.position.set(0.0, 1.4, 1.5);
+        camera.lookAt(0, 1.35, 0);
+
+        const light = new THREE.DirectionalLight(0xffffff, 0.8);
+        light.position.set(1, 1, 1).normalize();
+        scene.add(light);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+
+        const loader = new GLTFLoader();
+        loader.register((parser) => new VRMLoaderPlugin(parser, { autoUpdateHumanBond: true }));
+
+        function loadVRM(url) {
+            loader.load(url, (gltf) => {
+                const vrm = gltf.userData.vrm;
+                if (!vrm) { console.error('VRM not found in loaded file'); return; }
+                VRMUtils.removeUnnecessaryVertices(gltf.scene);
+                VRMUtils.removeUnnecessaryJoints(gltf.scene);
+                vrm.scene.traverse((obj) => { obj.frustumCulled = false; });
+                if (currentVrm) {
+                    scene.remove(currentVrm.scene);
+                    VRMUtils.deepDispose(currentVrm.scene);
+                }
+                vrm.scene.rotation.y = Math.PI;
+                scene.add(vrm.scene);
+                currentVrm = vrm;
+
+                try {
+                    const lArm = vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
+                    const rArm = vrm.humanoid.getNormalizedBoneNode('rightUpperArm');
+                    if (lArm) lArm.rotation.z = Math.PI / 2.5;
+                    if (rArm) rArm.rotation.z = -Math.PI / 2.5;
+                } catch (e) { console.warn(e); }
+                console.log('VRM Loaded');
+            }, undefined, (err) => {
+                console.error('VRM load failed:', err);
+                console.info('Run DownloadVrmModel.bat or place test.vrm in mascot-web/');
+            });
+        }
+
+        // Interactions
+        document.getElementById('start-btn').addEventListener('click', () => {
+            setupWebAudio();
+            setupWebSocket();
+            document.getElementById('start-prompt').style.display = 'none';
+            loadVRM('./test.vrm');
+        });
+
+        // Drag Rotate
+        let isDragging = false;
+        let prevX = 0;
+        document.addEventListener('mousedown', (e) => { isDragging = true; prevX = e.clientX; });
+        document.addEventListener('mouseup', () => isDragging = false);
+        document.addEventListener('mousemove', (e) => {
+            if (isDragging && currentVrm) {
+                currentVrm.scene.rotation.y += (e.clientX - prevX) * 0.01;
+                prevX = e.clientX;
+            }
+        });
+
+        // Animation Loop
+        const clock = new THREE.Clock();
+        // State variables for animation (currentConfirm, etc) - keeping minimal here for brevity but need to ensure variables exist
+        // Define them at top level? No, they were local inside script. Restoring them.
+        let currentConfirm = 0.0, targetConfirm = 0.0;
+        let currentSorrow = 0.0, targetSorrow = 0.0;
+        let currentTilt = 0.0, targetTilt = 0.0;
+        let currentJump = 0.0, targetJump = 0.0;
+        let currentLean = 0.0, targetLean = 0.0;
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+            const elapsed = clock.getElapsedTime();
+
+            if (currentVrm) {
+                try {
+                    currentVrm.update(delta);
+
+                    if (currentEmotion === 'happy') {
+                        targetConfirm = 1.0; targetSorrow = 0.0;
+                        targetTilt = Math.sin(elapsed * 3.0) * 0.05; targetJump = Math.abs(Math.sin(elapsed * 5.0) * 0.1);
+                    } else if (currentEmotion === 'sad') {
+                        targetConfirm = 0.0; targetSorrow = 1.0; targetTilt = 0.0; targetJump = 0.0;
+                    } else if (currentEmotion === 'question') {
+                        targetConfirm = 0.0; targetSorrow = 0.0; targetTilt = 0.15; targetLean = 0.3;
+                    } else {
+                        targetConfirm = 0.0; targetSorrow = 0.0; targetTilt = 0.0; targetJump = 0.0; targetLean = 0.0;
+                    }
+
+                    const speed = 3.0 * delta;
+                    currentConfirm += (targetConfirm - currentConfirm) * speed;
+                    currentSorrow += (targetSorrow - currentSorrow) * speed;
+                    currentTilt += (targetTilt - currentTilt) * speed;
+                    currentJump += (targetJump - currentJump) * speed;
+                    currentLean += (targetLean - currentLean) * speed;
+
+                    const em = currentVrm.expressionManager;
+                    em.setValue('happy', currentConfirm);
+                    em.setValue('sorrow', currentSorrow);
+
+                    if (Math.sin(elapsed * 0.2) > 0.98) em.setValue('blink', 1.0);
+                    else em.setValue('blink', 0.0);
+
+                    currentVrm.scene.position.y = currentJump;
+                    currentVrm.scene.position.z = currentLean;
+
+                    const neck = currentVrm.humanoid.getNormalizedBoneNode('neck');
+                    const spine = currentVrm.humanoid.getNormalizedBoneNode('spine');
+                    if (spine) spine.rotation.x = Math.sin(elapsed * 1.5) * 0.02;
+
+                    const vol = getPlaybackVolume();
+                    const mouthVal = Math.min(1.0, vol / 30.0);
+                    em.setValue('aa', mouthVal);
+
+                    if (neck) {
+                        let baseNod = Math.sin(elapsed * 0.5) * 0.02;
+                        if (currentEmotion === 'sad') baseNod = 0.2;
+                        neck.rotation.y = baseNod + mouthVal * 0.05;
+                        neck.rotation.z = currentTilt;
+                    }
+                } catch (e) { console.warn("Anim Error", e); }
+            }
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Min Button & Mode Switch (Safe Require)
+        try {
+            const electron = window.require ? window.require('electron') : null;
+            if (electron) {
+                const { ipcRenderer } = electron;
+
+                // Existing minimize (updated ID)
+                const minBar = document.getElementById('min-btn-bar');
+                if (minBar) minBar.addEventListener('click', () => ipcRenderer.send('minimize-window'));
+
+                // New Mode Switch
+                const modeBtn = document.getElementById('mode-switch-btn');
+                if (modeBtn) modeBtn.addEventListener('click', () => ipcRenderer.send('change-mode', 'simple'));
+
+                if (minBtn) minBtn.addEventListener('click', () => ipcRenderer.send('minimize-window'));
+            } else {
+                minBtn.style.display = 'none';
+            }
+        } catch (e) {
+            console.log('Not running in Electron or require failed:', e);
+            minBtn.style.display = 'none';
+        }
+
+    </script>
+</body>
+
+</html>

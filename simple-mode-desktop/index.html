@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Alter-Ego Cockpit Premium</title>
+  <link rel="stylesheet" href="index.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+  <div class="app-container">
+    <!-- Custom Title Bar for Dragging -->
+    <div style="height: 12px; -webkit-app-region: drag; cursor: move; margin-bottom: -4px;"></div>
+
+    <!-- Top Stats Bar -->
+    <header class="header-stats">
+      <div class="stat-card">
+        <span class="stat-label">Core</span>
+        <div class="stat-value"><span class="indicator online"></span> ONLINE</div>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Mic Stream</span>
+        <div class="stat-value" id="hidockStat"><span class="indicator offline"></span> STANDBY</div>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Neural Link</span>
+        <div class="stat-value" id="acpStat"><span class="indicator active"></span> LINKED</div>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Heartbeat</span>
+        <div class="stat-value" id="aleStat"><span class="indicator active"></span> PULSING</div>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Hub Cloud</span>
+        <div class="stat-value" id="mobileStat"><span class="indicator online"></span> SYNCED</div>
+      </div>
+    </header>
+
+    <!-- Main Viewport (The Premium Orb) -->
+    <main class="main-viewport">
+      <div class="ego-orb idle" id="egoOrb"></div>
+      <div class="state-text" id="stateLabel">INITIALIZING SYSTEMS...</div>
+
+      <!-- Control Bar -->
+      <div style="display: flex; gap: 8px;">
+        <button id="muteToggle" class="mute-btn" title="Toggle Voice">
+          <span id="muteIcon">🎙️</span>
+          <span id="muteLabel">VOICE ON</span>
+        </button>
+
+        <button id="audioUnlockBtn" class="mute-btn"
+          style="border-color: var(--accent-cyan); color: var(--accent-cyan);">
+          🔐 UNLOCK AUDIO
+        </button>
+
+        <button id="testAudioBtn" class="mute-btn"
+          style="border-color: var(--accent-purple); color: var(--accent-purple);">
+          🔊 TEST
+        </button>
+      </div>
+    </main>
+
+    <!-- Mid Section: Interaction Log + Role Switcher -->
+    <section class="bottom-panel">
+      <!-- Role Switcher -->
+      <nav class="role-switcher">
+        <div class="role-btn active" title="Commander" data-role="commander">♔</div>
+        <div class="role-btn" title="Coder" data-role="coder">⚙</div>
+        <div class="role-btn" title="Scout" data-role="scout" id="scout-btn">📡<span id="scout-notice"
+            class="notice-badge" style="display:none">!</span></div>
+        <div class="role-btn" title="Mascot Mode" id="mascot-mode-btn" style="color:var(--accent-cyan)">👤</div>
+        <div class="role-btn" title="Minimize" id="min-btn-simple">－</div>
+      </nav>
+
+      <!-- Chat Log -->
+      <div class="log-container">
+        <div class="panel-title">
+          <span>INTERACTION LOG</span>
+        </div>
+        <div class="chat-scroll" id="logContent">
+          <!-- Messages will appear here -->
+        </div>
+      </div>
+    </section>
+
+    <!-- Low Section: Patrol Peek -->
+    <div class="patrol-peek">
+      <div class="panel-title">
+        <span>LIVE PATROL FEED</span>
+        <button type="button" id="report-history-btn" class="report-history-btn"
+          style="font-size: 9px; padding: 2px 8px;">📋 FULL HISTORY</button>
+      </div>
+      <div class="patrol-scroll" id="patrolPeekContent">
+        <div class="patrol-line">Waiting for patrol signal...</div>
+      </div>
+    </div>
+
+    <!-- HUB Toast for Alerts -->
+    <div id="hub-toast-simple">
+      <div class="icon">🔔</div>
+      <div class="content">SYSTEM NOTIFICATION</div>
+    </div>
+
+    <!-- ALE 報告履歴モーダル -->
+    <div id="report-history-overlay" class="report-history-overlay" style="display: none;">
+      <div class="report-history-panel">
+        <div class="report-history-header">
+          <h3 style="font-family:'Outfit', sans-serif;">📋 ALE PATROL LOGS</h3>
+          <button type="button" id="report-history-close" class="report-history-close">CLOSE</button>
+        </div>
+        <div class="report-history-scroll" id="reportHistoryContent">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      'use strict';
+      const WS_PORT = 8080;
+      const egoOrb = document.getElementById('egoOrb');
+      const stateLabel = document.getElementById('stateLabel');
+      const logContent = document.getElementById('logContent');
+      const audioUnlockBtn = document.getElementById('audioUnlockBtn');
+      const hubToast = document.getElementById('hub-toast-simple');
+      const muteToggle = document.getElementById('muteToggle');
+      const muteIcon = document.getElementById('muteIcon');
+      const muteLabel = document.getElementById('muteLabel');
+
+      const testAudioBtn = document.getElementById('testAudioBtn');
+      const patrolPeekContent = document.getElementById('patrolPeekContent');
+
+      let ws = null;
+      let audioUnlocked = false;
+      let isPlaying = false;
+      let audioQueue = [];
+      let audioEl = null;
+      let isMuted = false;
+      let reconnectAttempts = 0;
+
+      function updatePatrolPeek(line) {
+        const div = document.createElement('div');
+        div.className = 'patrol-line';
+        div.textContent = line;
+        patrolPeekContent.prepend(div);
+        if (patrolPeekContent.childNodes.length > 20) {
+          patrolPeekContent.removeChild(patrolPeekContent.lastChild);
+        }
+      }
+
+      function setState(s) {
+        egoOrb.className = 'ego-orb ' + s;
+        const labels = {
+          idle: 'AWAITING INPUT',
+          listening: 'LISTENING...',
+          speaking: 'EGO IS SPEAKING',
+          connected: 'SYSTEM ONLINE',
+          off: 'CORE OFFLINE',
+          muted: 'VOICE INACTIVE',
+          reconnecting: 'RECONNECTING LINK...',
+          error: 'SYSTEM ERROR'
+        };
+        stateLabel.textContent = labels[s] || s.toUpperCase();
+      }
+
+      function appendLog(who, text) {
+        if (!text) return;
+        const div = document.createElement('div');
+        div.className = 'msg ' + who;
+        div.textContent = text;
+        logContent.appendChild(div);
+        logContent.scrollTop = logContent.scrollHeight;
+      }
+
+      function showHubToast(tag, text) {
+        const iconMap = {
+          "[URGENT]": "🚨", "[SLACK]": "📬", "[GITHUB]": "⚙️", "[DEVIN]": "🤖",
+          "[ALERT]": "⚠️", "[PATROL]": "📋", "[FINANCE]": "💰", "[SYSTEM_REPORT]": "📊", "[MUSING]": "🧠"
+        };
+        hubToast.querySelector('.icon').textContent = iconMap[tag] || "🔔";
+        hubToast.querySelector('.content').innerHTML = `<strong>${tag}</strong><br>${text}`;
+        hubToast.classList.add('show');
+        appendLog('ego', `[${tag}] ${text}`);
+        updatePatrolPeek(`${tag} ${text}`);
+
+        if (tag === "[SYSTEM_REPORT]" || tag === "[PATROL]") {
+          document.getElementById('scout-notice').style.display = 'block';
+        }
+        setTimeout(() => { hubToast.classList.remove('show'); }, 8000);
+      }
+
+      function tryPlayNext() {
+        if (isPlaying || audioQueue.length === 0 || !audioUnlocked) return;
+        const item = audioQueue.shift();
+        if (!audioEl) {
+          audioEl = document.createElement('audio');
+          document.body.appendChild(audioEl);
+          audioEl.onended = () => {
+            isPlaying = false;
+            tryPlayNext();
+            if (audioQueue.length === 0) setState(isMuted ? 'muted' : 'idle');
+          };
+        }
+
+        try {
+          const binary = atob(item.base64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          const blob = new Blob([bytes], { type: 'audio/mpeg' });
+          audioEl.src = URL.createObjectURL(blob);
+          isPlaying = true;
+          setState('speaking');
+          audioEl.play().then(() => {
+            console.log("Playback started");
+          }).catch(e => {
+            console.error("Playback failed:", e);
+            appendLog('ego', '[Audio Error] ' + e.message);
+            isPlaying = false;
+            tryPlayNext();
+          });
+        } catch (e) {
+          console.error("Blob creation failed:", e);
+          appendLog('ego', '[Audio Error] Data corrupted?');
+          isPlaying = false;
+          tryPlayNext();
+        }
+      }
+
+      function connect() {
+        if (reconnectAttempts > 0) setState('reconnecting');
+        ws = new WebSocket('ws://127.0.0.1:' + WS_PORT);
+        ws.onopen = () => {
+          reconnectAttempts = 0;
+          setState(isMuted ? 'muted' : 'idle');
+          appendLog('ego', 'Neural Link Established. System ready.');
+        };
+        ws.onmessage = (e) => {
+          const msg = JSON.parse(e.data);
+          if (msg.type === 'audio') {
+            audioQueue.push({ base64: msg.data });
+            if (msg.text) appendLog('ego', msg.text);
+            tryPlayNext();
+          } else if (msg.type === 'user_text') {
+            appendLog('user', msg.text);
+            setState('listening'); // ユーザー入力中
+            setTimeout(() => { if (!isPlaying) setState(isMuted ? 'muted' : 'idle'); }, 2000);
+          } else if (msg.type === 'hub_alert') {
+            showHubToast(msg.tag, msg.text);
+          } else if (msg.type === 'stop_audio') {
+            if (audioEl) { audioEl.pause(); audioEl.currentTime = 0; }
+            audioQueue = []; isPlaying = false;
+            setState(isMuted ? 'muted' : 'idle');
+          } else if (msg.type === 'state_change') {
+            setState(msg.state);
+          } else if (msg.type === 'mic_info') {
+            const hidockStat = document.getElementById('hidockStat');
+            hidockStat.innerHTML = '<span class="indicator online"></span> ' + (msg.device_name || 'Active').substring(0, 15);
+          }
+        };
+        ws.onclose = () => {
+          reconnectAttempts++;
+          setState('reconnecting');
+          const delay = Math.min(3000 * Math.pow(1.5, reconnectAttempts - 1), 15000);
+          setTimeout(connect, delay);
+        };
+      }
+
+      audioUnlockBtn.onclick = () => {
+        audioUnlocked = true;
+        audioUnlockBtn.style.display = 'none';
+        appendLog('ego', 'Audio stream synchronized.');
+        // dummy play to unlock
+        const a = new Audio(); a.play().catch(() => { });
+        tryPlayNext();
+      };
+
+      testAudioBtn.onclick = () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          appendLog('user', '[Diagnostics] Testing audio link...');
+          ws.send(JSON.stringify({ type: 'text_input', text: 'テスト音声を出して' }));
+        }
+      };
+
+      muteToggle.onclick = (e) => {
+        isMuted = !isMuted;
+        muteIcon.textContent = isMuted ? '🔇' : '🎙️';
+        muteLabel.textContent = isMuted ? 'VOICE OFF' : 'VOICE ON';
+        muteToggle.classList.toggle('muted', isMuted);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'mute', value: isMuted }));
+        }
+        setState(isMuted ? 'muted' : 'idle');
+      };
+
+      document.getElementById('scout-btn').onclick = () => {
+        document.getElementById('scout-notice').style.display = 'none';
+      };
+
+      // Electron IPC
+      try {
+        const electron = window.require ? window.require('electron') : null;
+        if (electron) {
+          const { ipcRenderer } = electron;
+          const fs = window.require('fs');
+          const path = window.require('path');
+
+          document.getElementById('mascot-mode-btn').onclick = () => { ipcRenderer.send('change-mode', 'mascot'); };
+          document.getElementById('min-btn-simple').onclick = () => { ipcRenderer.send('minimize-window'); };
+
+          const reportLogPath = path.join(__dirname, '..', 'logs', 'report.log');
+          const reportHistoryOverlay = document.getElementById('report-history-overlay');
+          const reportHistoryContent = document.getElementById('reportHistoryContent');
+
+          function loadPeek() {
+            if (fs.existsSync(reportLogPath)) {
+              const raw = fs.readFileSync(reportLogPath, 'utf8');
+              const lines = raw.split('\n').filter(l => l.trim()).slice(-5);
+              lines.forEach(l => updatePatrolPeek(l));
+            }
+          }
+          loadPeek();
+
+          document.getElementById('report-history-btn').onclick = function () {
+            if (fs.existsSync(reportLogPath)) {
+              const raw = fs.readFileSync(reportLogPath, 'utf8');
+              const lines = raw.split('\n').filter(l => l.trim()).slice(-50).reverse();
+              reportHistoryContent.innerHTML = lines.map(line => `<div class="report-history-line">${line.replace(/</g, '&lt;')}</div>`).join('');
+            } else {
+              reportHistoryContent.innerHTML = '<p style="padding:20px; color:var(--text-muted)">No patrol logs found.</p>';
+            }
+            reportHistoryOverlay.style.display = 'flex';
+          };
+          document.getElementById('report-history-close').onclick = () => { reportHistoryOverlay.style.display = 'none'; };
+        }
+      } catch (e) { }
+
+      connect();
+    })();
+  </script>
+</body>
+
+</html>

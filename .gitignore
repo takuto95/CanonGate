@@ -1,0 +1,13 @@
+が
+.venv/
+__pycache__/
+*.log
+.env.local
+vtube_token.txt
+vseeface_config.json
+*.vrm
+node_modules/
+dist/
+build/
+.DS_Store
+*.zip

@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LiveTalk 簡易モード</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 12px;
+      font-family: "Segoe UI", sans-serif;
+      background: #1a1a1a;
+      color: #e0e0e0;
+      min-width: 200px;
+      user-select: none;
+    }
+    .state-circle {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      margin: 12px auto;
+      transition: background-color 0.3s, box-shadow 0.3s;
+    }
+    .state-circle.idle      { background: #555; box-shadow: 0 0 0 0 rgba(85,85,85,0.4); }
+    .state-circle.connected { background: #2d5a8a; box-shadow: 0 0 12px rgba(45,90,138,0.6); }
+    .state-circle.listening { background: #2563eb; box-shadow: 0 0 16px rgba(37,99,235,0.7); }
+    .state-circle.speaking  { background: #16a34a; box-shadow: 0 0 16px rgba(22,163,74,0.7); }
+    .state-circle.off       { background: #444; box-shadow: none; }
+    .state-label {
+      text-align: center;
+      font-size: 11px;
+      margin-bottom: 8px;
+      min-height: 16px;
+    }
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .toggle-label {
+      font-size: 12px;
+    }
+    .toggle {
+      position: relative;
+      width: 44px;
+      height: 24px;
+      background: #444;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .toggle.on { background: #16a34a; }
+    .toggle::after {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 20px;
+      height: 20px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform 0.2s;
+    }
+    .toggle.on::after { transform: translateX(20px); }
+    .status {
+      font-size: 10px;
+      color: #888;
+      text-align: center;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="state-label" id="stateLabel">接続していません</div>
+  <div class="state-circle off" id="stateCircle"></div>
+  <div class="toggle-row">
+    <span class="toggle-label">音声</span>
+    <div class="toggle" id="voiceToggle" title="音声 ON/OFF"></div>
+  </div>
+  <div class="status" id="status"></div>
+  <div id="audioContainer" aria-hidden="true" style="position:absolute;left:-9999px;width:0;height:0;"></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

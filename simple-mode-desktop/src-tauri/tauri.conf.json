@@ -1,0 +1,40 @@
+{
+  "productName": "LiveTalk Simple Mode",
+  "version": "0.1.0",
+  "identifier": "com.livetalkaiagent.simple-mode",
+  "build": {
+    "beforeDevCommand": "",
+    "beforeBuildCommand": "",
+    "devUrl": "http://127.0.0.1:8765",
+    "frontendDist": "http://127.0.0.1:8765"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "LiveTalk Simple Mode",
+        "width": 220,
+        "height": 180,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [],
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": null,
+      "timestampUrl": "",
+      "wix": null,
+      "nsis": null
+    },
+    "longDescription": "LiveTalk simplified mode: shape-only UI, always connected, voice ON/OFF.",
+    "shortDescription": "LiveTalk Simple Mode desktop",
+    "category": "Utility"
+  },
+  "plugins": {}
+}

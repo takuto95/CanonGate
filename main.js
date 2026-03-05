@@ -59,6 +59,16 @@ function createWindow() {
         if (mainWin) mainWin.minimize();
     });
 
+    ipcMain.on('maximize-window', () => {
+        if (mainWin) {
+            if (mainWin.isMaximized()) {
+                mainWin.unmaximize();
+            } else {
+                mainWin.maximize();
+            }
+        }
+    });
+
     ipcMain.on('change-mode', (event, mode) => {
         setWindowMode(mode);
     });

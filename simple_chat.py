@@ -736,7 +736,15 @@ async def main_async():
 
     # Start WebSocket Server (127.0.0.1 to avoid IPv6 bind conflict on Windows)
     log.info(f"WS Starting server on {WS_HOST}:{WS_PORT}...")
-    start_server = await websockets.serve(ws_handler, WS_HOST, WS_PORT)
+    try:
+        start_server = await websockets.serve(ws_handler, WS_HOST, WS_PORT)
+    except OSError as e:
+        if getattr(e, 'errno', None) == 10048 or 'Address already in use' in str(e):
+            log.error(f"Port {WS_PORT} is already in use (OSError {e.errno}).")
+            log.error(f"To use a different port: set WS_PORT=8081 (then restart).")
+            log.error(f"EgoGate UI will auto-detect the port via commander_api /api/ego-gate-config.")
+            raise SystemExit(1)
+        raise
 
     # 1. Check Ollama & Auto-Start (P3: improved error feedback)
     try:

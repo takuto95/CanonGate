@@ -24,8 +24,19 @@ if %ERRORLEVEL% neq 0 (
     )
 )
 
+:: --- Start Commander API (port 8000: Hub & Ego Gate config) ---
+set ALTER_EGO_ROOT=..\alter-ego
+if not exist "%ALTER_EGO_ROOT%\scripts\liaison\commander_api.py" set ALTER_EGO_ROOT=..\Alter-Ego
+if exist "%ALTER_EGO_ROOT%\scripts\liaison\commander_api.py" (
+    echo [System] Starting Commander API on port 8000...
+    start "Commander API" cmd /k "cd /d %~dp0%ALTER_EGO_ROOT% && python scripts\liaison\commander_api.py"
+    timeout /t 2 /nobreak >nul
+) else (
+    echo [WARNING] Commander API not found. Hub and Canvas may not work. Start manually: cd alter-ego ^&^& python scripts\liaison\commander_api.py
+)
+
 :: --- Start Auto-Loop Engine (ALE) ---
-set ALE_PATH=..\Alter-Ego\scripts\guardian\auto_loop_engine.py
+set ALE_PATH=%ALTER_EGO_ROOT%\scripts\guardian\auto_loop_engine.py
 set LIFE_ENV=%USERPROFILE%\.alterego\env.life
 
 if not exist "%ALE_PATH%" (

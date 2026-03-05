@@ -413,6 +413,232 @@ body {
   font-style: italic;
 }
 
+/* ── Hub Task Cards ── */
+.hub-loading {
+  text-align: center;
+  color: var(--text-dim);
+  padding: 30px 0;
+  font-size: 10px;
+  letter-spacing: 2px;
+}
+
+.hub-error {
+  text-align: center;
+  color: #ff4c6a;
+  padding: 20px 0;
+  font-size: 10px;
+}
+
+.hub-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hub-task-card {
+  background: rgba(0, 20, 35, 0.6);
+  border: 1px solid var(--glass-border);
+  border-radius: 3px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hub-task-card:hover {
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 12px rgba(0, 243, 255, 0.15);
+}
+
+.hub-task-card.running {
+  border-color: #f0c040;
+  box-shadow: 0 0 10px rgba(240, 192, 64, 0.2);
+}
+
+.hub-task-badge {
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: 2px;
+  letter-spacing: 1px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.hub-task-badge.next-action { background: rgba(0, 243, 255, 0.15); color: var(--neon-cyan); }
+.hub-task-badge.inbox { background: rgba(100, 200, 255, 0.15); color: #90caf9; }
+.hub-task-badge.evaluating { background: rgba(240, 192, 64, 0.15); color: #f0c040; }
+.hub-task-badge.clickup { background: rgba(124, 77, 255, 0.15); color: #b388ff; }
+
+/* Domain Switcher */
+.hub-domain-switcher {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+  margin-right: 8px;
+}
+
+.hub-domain-btn {
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--text-dim);
+  font-size: 7px;
+  padding: 2px 6px;
+  cursor: pointer;
+  letter-spacing: 1px;
+  border-radius: 2px;
+  transition: 0.2s;
+}
+
+.hub-domain-btn.active {
+  border-color: var(--neon-cyan);
+  color: var(--neon-cyan);
+  background: rgba(0, 243, 255, 0.1);
+}
+
+.hub-domain-btn:hover {
+  border-color: var(--neon-cyan);
+}
+
+/* Executor Tags */
+.hub-executor-tag {
+  font-size: 7px;
+  padding: 1px 4px;
+  border-radius: 2px;
+  letter-spacing: 1px;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.hub-executor-tag.cursor { background: rgba(255, 152, 0, 0.15); color: #ffb74d; }
+.hub-executor-tag.cli { background: rgba(0, 243, 255, 0.15); color: var(--neon-cyan); }
+.hub-executor-tag.clickup { background: rgba(124, 77, 255, 0.15); color: #b388ff; }
+.hub-executor-tag.manual { background: rgba(255, 255, 255, 0.1); color: var(--text-dim); }
+
+.hub-task-title {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-bright);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hub-task-exec {
+  background: transparent;
+  border: 1px solid var(--neon-cyan);
+  color: var(--neon-cyan);
+  font-size: 8px;
+  padding: 3px 8px;
+  cursor: pointer;
+  letter-spacing: 1px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  transition: 0.2s;
+}
+
+.hub-task-exec:hover {
+  background: rgba(0, 243, 255, 0.15);
+}
+
+.hub-task-exec:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.hub-section-label {
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+  margin: 12px 0 4px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.hub-section-label:first-child {
+  margin-top: 0;
+}
+
+.hub-task-detail {
+  margin-top: 8px;
+  padding: 10px;
+  background: rgba(0, 10, 20, 0.8);
+  border: 1px solid var(--glass-border);
+  border-radius: 3px;
+  font-size: 10px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.hub-exec-log {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: rgba(0, 5, 10, 0.9);
+  border: 1px solid rgba(0, 243, 255, 0.1);
+  border-radius: 3px;
+  font-size: 9px;
+  color: var(--text-dim);
+  max-height: 120px;
+  overflow-y: auto;
+  line-height: 1.4;
+}
+
+.hub-exec-log .log-line { margin-bottom: 2px; }
+.hub-exec-log .log-line.success { color: #66ffba; }
+.hub-exec-log .log-line.warning { color: #f0c040; }
+.hub-exec-log .log-line.error { color: #ff4c6a; }
+
+/* Canvas Editor */
+.canvas-editor {
+  margin-top: 10px;
+}
+
+.canvas-textarea {
+  width: 100%;
+  height: 180px;
+  background: rgba(0, 5, 10, 0.9);
+  border: 1px solid var(--glass-border);
+  border-radius: 3px;
+  color: var(--text-bright);
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 10px;
+  padding: 8px;
+  resize: vertical;
+  outline: none;
+}
+
+.canvas-textarea:focus {
+  border-color: var(--neon-cyan);
+}
+
+.panel-footer {
+  padding: 8px 15px;
+  border-top: 1px solid var(--glass-border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.ctrl-btn-sm {
+  background: transparent;
+  border: 1px solid var(--neon-cyan);
+  color: var(--neon-cyan);
+  font-size: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
+  letter-spacing: 1px;
+  border-radius: 2px;
+  transition: 0.2s;
+}
+
+.ctrl-btn-sm:hover {
+  background: rgba(0, 243, 255, 0.15);
+}
+
 @media (max-width: 500px) {
   .jarvis-core {
     transform: scale(0.8);

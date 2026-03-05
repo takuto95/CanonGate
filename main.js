@@ -1,6 +1,12 @@
 const { app, BrowserWindow, screen, ipcMain } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
+const { pathToFileURL } = require('url');
+
+function getDomainFromArgv() {
+    const i = process.argv.indexOf('--domain');
+    return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : '';
+}
 
 // Fix for transparent window issues on Windows
 app.disableHardwareAcceleration();
@@ -21,10 +27,13 @@ function setWindowMode(mode) {
         // Mascot mode is usually centered or bottom right
         mainWin.loadFile(path.join(__dirname, 'mascot-web', 'index.html'));
     } else {
-        // Simple Mode (Cockpit) is wider and taller
+        // Simple Mode (Cockpit) is wider and taller. Pass ?domain=tech so HUB shows work tasks only.
         mainWin.setSize(900, 850);
         mainWin.setResizable(true);
-        mainWin.loadFile(path.join(__dirname, 'simple-mode-desktop', 'index.html'));
+        const domain = getDomainFromArgv();
+        const filePath = path.join(__dirname, 'simple-mode-desktop', 'index.html');
+        const fileUrl = pathToFileURL(filePath).href;
+        mainWin.loadURL(domain ? `${fileUrl}?domain=${encodeURIComponent(domain)}` : fileUrl);
     }
 }
 

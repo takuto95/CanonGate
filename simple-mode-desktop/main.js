@@ -1,6 +1,12 @@
 const { app, BrowserWindow } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
+const { pathToFileURL } = require('url');
+
+function getDomainFromArgv() {
+  const i = process.argv.indexOf('--domain');
+  return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : '';
+}
 
 // 音声をユーザー操作なしでも再生できるようにする（app.ready より前に必須）
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -40,7 +46,9 @@ function createWindow() {
     }
   });
 
-  mainWindow.loadFile(path.join(__dirname, 'index.html'));
+  const domain = getDomainFromArgv();
+  const fileUrl = pathToFileURL(path.join(__dirname, 'index.html')).href;
+  mainWindow.loadURL(domain ? `${fileUrl}?domain=${encodeURIComponent(domain)}` : fileUrl);
 
   mainWindow.on('closed', () => {
     mainWindow = null;

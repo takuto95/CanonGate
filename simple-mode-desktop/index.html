@@ -94,18 +94,32 @@
       </div>
 
       <div id="panel-hub" class="hud-panel">
-        <div class="panel-header"><span>AGENT_HUB</span> <button class="panel-close">×</button></div>
-        <div class="panel-content" id="hubContent">
-          <div class="agent-grid">
-            <div class="agent-card active"><span class="icon">👑</span><strong>Commander</strong></div>
-            <div class="agent-card"><span class="icon">⚙️</span><strong>Coder</strong></div>
+        <div class="panel-header">
+          <span>TASK_HUB</span>
+          <div class="hub-domain-switcher">
+            <button class="hub-domain-btn active" data-domain="">PRIV</button>
+            <button class="hub-domain-btn" data-domain="tech">TECH</button>
+            <button class="hub-domain-btn" data-domain="all">ALL</button>
           </div>
+          <button class="panel-close">×</button>
+        </div>
+        <div class="panel-content" id="hubContent">
+          <div class="hub-loading">LOADING TASKS...</div>
+        </div>
+        <div class="panel-footer">
+          <button id="hub-refresh-btn" class="ctrl-btn-sm">REFRESH</button>
         </div>
       </div>
 
       <div id="panel-canvas" class="hud-panel">
         <div class="panel-header"><span>WORKSPACE_CANVAS</span> <button class="panel-close">×</button></div>
-        <div class="panel-content" id="canvasContent">Initializing workspace...</div>
+        <div class="panel-content" id="canvasContent">
+          <div class="hub-loading">LOADING CANVAS FILES...</div>
+        </div>
+        <div class="panel-footer">
+          <label class="ctrl-btn-sm" style="cursor:pointer;">UPLOAD<input type="file" id="canvasFileInput" accept=".mmd,.svg,.drawio,.excalidraw,.json,.png,.jpg,.jpeg" style="display:none;"></label>
+          <button id="canvas-refresh-btn" class="ctrl-btn-sm">REFRESH</button>
+        </div>
       </div>
     </div>
 
@@ -119,7 +133,7 @@
   <script>
     (function () {
       'use strict';
-      const WS_PORT = 8080;
+      let WS_PORT = 8080; // default, overridden by /api/ego-gate-config
       const egoOrb = document.getElementById('egoOrb');
       const stateLabel = document.getElementById('stateLabel');
       const logContent = document.getElementById('logContent');
@@ -137,7 +151,9 @@
       let audioEl = null;
       let reconnectAttempts = 0;
 
-      // HUD Logic: Reveal Menu
+      // HUD Logic: Reveal Menu (Canvas & Hub visible by default)
+      satDock.classList.add('active');
+      cmdArea.classList.add('active');
       hexBtn.onclick = () => {
         satDock.classList.toggle('active');
         cmdArea.classList.toggle('active');
@@ -257,7 +273,348 @@
         }
       } catch (e) { }
 
-      connect();
+      // ── Hub Integration (Phase 1 — ADR-0158) ──
+      const COMMANDER_API = 'http://127.0.0.1:8000';
+      let HUB_DOMAIN = (function () { var p = new URLSearchParams(window.location.search); return p.get('domain') || ''; })();
+      const hubContent = document.getElementById('hubContent');
+      let hubLoaded = false;
+
+      // Domain switcher
+      document.querySelectorAll('.hub-domain-btn').forEach(btn => {
+        if (btn.dataset.domain === HUB_DOMAIN) { btn.classList.add('active'); } else { btn.classList.remove('active'); }
+        btn.onclick = () => {
+          HUB_DOMAIN = btn.dataset.domain;
+          document.querySelectorAll('.hub-domain-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          loadHubTasks();
+        };
+      });
+      let hubWs = null;
+      let hubExecLog = null;
+
+      async function loadHubTasks() {
+        hubContent.innerHTML = '<div class="hub-loading">FETCHING TASKS...</div>';
+        try {
+          const res = await fetch(COMMANDER_API + '/api/tasks' + (HUB_DOMAIN ? '?domain=' + encodeURIComponent(HUB_DOMAIN) : ''));
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const data = await res.json();
+          renderHubTasks(data.tasks || []);
+          hubLoaded = true;
+        } catch (err) {
+          hubContent.innerHTML = '<div class="hub-error">COMMANDER_API OFFLINE<br><span style="font-size:9px;color:var(--text-dim);">' + err.message + '</span></div>';
+        }
+      }
+
+      function renderHubTasks(tasks) {
+        if (tasks.length === 0) {
+          hubContent.innerHTML = '<div class="hub-loading">NO ACTIVE TASKS</div>';
+          return;
+        }
+        // Group by status
+        const groups = {};
+        tasks.forEach(t => {
+          const g = t.status || 'unknown';
+          if (!groups[g]) groups[g] = [];
+          groups[g].push(t);
+        });
+
+        const order = ['next-action', 'inbox', 'evaluating', 'clickup'];
+        const labels = { 'next-action': 'NEXT ACTIONS', 'inbox': 'INBOX / BRIEFS', 'evaluating': 'EVALUATING', 'clickup': 'CLICKUP' };
+        let html = '<div class="hub-task-list">';
+
+        order.forEach(status => {
+          const items = groups[status];
+          if (!items || items.length === 0) return;
+          html += '<div class="hub-section-label">' + (labels[status] || status.toUpperCase()) + '</div>';
+          items.forEach(t => {
+            const running = t.is_running ? ' running' : '';
+            const isClickup = status === 'clickup';
+            const cuStatus = (t.metadata && t.metadata.clickup_status) || '';
+            const badgeText = isClickup ? (cuStatus.slice(0, 6).toUpperCase() || 'CU') : status.replace('-', ' ').toUpperCase().slice(0, 6);
+            const btnLabel = isClickup ? 'OPEN' : (t.is_running ? 'RUNNING' : 'EXEC');
+            const disabled = (!isClickup && t.is_running) ? ' disabled' : '';
+            const btnData = isClickup ? ' data-url="' + escHtml(t.filepath) + '"' : ' data-id="' + escHtml(t.id) + '"';
+            const executor = (t.metadata && t.metadata.executor) || '';
+            const execTag = executor ? '<span class="hub-executor-tag ' + executor + '">' + executor.toUpperCase() + '</span>' : '';
+            html += '<div class="hub-task-card' + running + '" data-id="' + escHtml(t.id) + '">'
+              + '<span class="hub-task-badge ' + status + '">' + badgeText + '</span>'
+              + execTag
+              + '<span class="hub-task-title" title="' + escHtml(t.title) + '">' + escHtml(t.title) + '</span>'
+              + '<button class="hub-task-exec' + (isClickup ? ' clickup-open' : '') + '"' + disabled + btnData + '>' + btnLabel + '</button>'
+              + '</div>';
+          });
+        });
+
+        // Any remaining groups
+        Object.keys(groups).forEach(s => {
+          if (order.includes(s)) return;
+          const items = groups[s];
+          html += '<div class="hub-section-label">' + s.toUpperCase() + '</div>';
+          items.forEach(t => {
+            html += '<div class="hub-task-card" data-id="' + escHtml(t.id) + '">'
+              + '<span class="hub-task-badge">' + s.slice(0, 6).toUpperCase() + '</span>'
+              + '<span class="hub-task-title">' + escHtml(t.title) + '</span>'
+              + '<button class="hub-task-exec" data-id="' + escHtml(t.id) + '">EXEC</button>'
+              + '</div>';
+          });
+        });
+
+        html += '</div>';
+        hubContent.innerHTML = html;
+
+        // Bind exec buttons (GTD) and open buttons (ClickUp)
+        hubContent.querySelectorAll('.hub-task-exec').forEach(btn => {
+          if (btn.classList.contains('clickup-open')) {
+            btn.onclick = (e) => { e.stopPropagation(); window.open(btn.dataset.url, '_blank'); };
+          } else {
+            btn.onclick = (e) => { e.stopPropagation(); executeTask(btn.dataset.id); };
+          }
+        });
+
+        // Bind card click for detail
+        hubContent.querySelectorAll('.hub-task-card').forEach(card => {
+          card.onclick = () => showTaskDetail(card.dataset.id);
+        });
+      }
+
+      function escHtml(s) {
+        const d = document.createElement('div');
+        d.textContent = s || '';
+        return d.innerHTML;
+      }
+
+      async function showTaskDetail(taskId) {
+        try {
+          const res = await fetch(COMMANDER_API + '/api/tasks/' + encodeURIComponent(taskId));
+          if (!res.ok) return;
+          const data = await res.json();
+          const preview = (data.metadata && data.metadata.content_preview) || '';
+          // Insert detail below the task list
+          let detailEl = hubContent.querySelector('.hub-task-detail');
+          if (detailEl) detailEl.remove();
+          detailEl = document.createElement('div');
+          detailEl.className = 'hub-task-detail';
+          detailEl.textContent = taskId + '\n\n' + preview;
+          hubContent.appendChild(detailEl);
+        } catch (e) { /* ignore */ }
+      }
+
+      async function executeTask(taskId) {
+        try {
+          const res = await fetch(COMMANDER_API + '/api/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ task_id: taskId })
+          });
+          if (!res.ok) {
+            appendLog('ego', '[HUB] Execute failed: HTTP ' + res.status);
+            return;
+          }
+          appendLog('ego', '[HUB] Task started: ' + taskId);
+          connectHubWs(taskId);
+          // Show inline log area
+          let logEl = hubContent.querySelector('.hub-exec-log');
+          if (!logEl) {
+            logEl = document.createElement('div');
+            logEl.className = 'hub-exec-log';
+            hubContent.appendChild(logEl);
+          }
+          logEl.innerHTML = '<div class="log-line">EXECUTING ' + escHtml(taskId) + '...</div>';
+          hubExecLog = logEl;
+        } catch (e) {
+          appendLog('ego', '[HUB] Execute error: ' + e.message);
+        }
+      }
+
+      function connectHubWs(taskId) {
+        if (hubWs) { try { hubWs.close(); } catch (_) {} }
+        try {
+          hubWs = new WebSocket(COMMANDER_API.replace('http', 'ws') + '/ws');
+          hubWs.onmessage = (e) => {
+            try {
+              const msg = JSON.parse(e.data);
+              if (msg.type === 'task_log' && hubExecLog) {
+                const cls = msg.level === 'error' ? 'error' : msg.level === 'warning' ? 'warning' : msg.level === 'success' ? 'success' : '';
+                const line = document.createElement('div');
+                line.className = 'log-line ' + cls;
+                line.textContent = msg.message || '';
+                hubExecLog.appendChild(line);
+                hubExecLog.scrollTop = hubExecLog.scrollHeight;
+              }
+              if (msg.type === 'task_done') {
+                appendLog('ego', '[HUB] Task done: ' + (msg.task_id || taskId));
+                setTimeout(loadHubTasks, 1000);
+              }
+            } catch (_) {}
+          };
+          hubWs.onerror = () => {};
+          hubWs.onclose = () => { hubWs = null; };
+        } catch (_) {}
+      }
+
+      // Auto-load hub tasks when panel opens
+      const origHubClick = document.getElementById('btn-hub').onclick;
+      document.getElementById('btn-hub').onclick = (e) => {
+        origHubClick && origHubClick(e);
+        // Panel is now toggled; if active, load tasks
+        setTimeout(() => {
+          if (document.getElementById('panel-hub').classList.contains('active')) {
+            loadHubTasks();
+          }
+        }, 50);
+      };
+
+      document.getElementById('hub-refresh-btn').onclick = loadHubTasks;
+
+      // ── Canvas Integration (Phase 1 — ADR-0156) ──
+      const canvasContent = document.getElementById('canvasContent');
+      const canvasFileInput = document.getElementById('canvasFileInput');
+
+      async function loadCanvasFiles() {
+        canvasContent.innerHTML = '<div class="hub-loading">SCANNING CANVAS FILES...</div>';
+        try {
+          const res = await fetch(COMMANDER_API + '/api/canvas/files');
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const data = await res.json();
+          renderCanvasFiles(data.files || []);
+        } catch (err) {
+          canvasContent.innerHTML = '<div class="hub-error">CANVAS API OFFLINE<br><span style="font-size:9px;color:var(--text-dim);">' + err.message + '</span></div>';
+        }
+      }
+
+      function renderCanvasFiles(files) {
+        if (files.length === 0) {
+          canvasContent.innerHTML = '<div class="hub-loading">NO CANVAS FILES<br><span style="font-size:9px;color:var(--text-dim);">Upload files via the UPLOAD button below</span></div>';
+          return;
+        }
+        let html = '<div class="hub-task-list">';
+        html += '<div class="hub-section-label">CANVAS FILES (' + files.length + ')</div>';
+        files.forEach(f => {
+          const ext = f.extension.replace('.', '').toUpperCase();
+          const size = f.size < 1024 ? f.size + 'B' : Math.round(f.size / 1024) + 'KB';
+          const textBadge = f.is_text ? 'next-action' : 'inbox';
+          const isImage = /^\.(png|jpg|jpeg)$/i.test(f.extension);
+          let actionBtn = '';
+          if (f.is_text) actionBtn = '<button class="hub-task-exec canvas-edit-btn" data-path="' + escHtml(f.path) + '">EDIT</button>';
+          else if (isImage) actionBtn = '<button class="hub-task-exec canvas-view-btn" data-path="' + escHtml(f.path) + '">VIEW</button>';
+          html += '<div class="hub-task-card" data-path="' + escHtml(f.path) + '" data-text="' + (f.is_text ? '1' : '0') + '">'
+            + '<span class="hub-task-badge ' + textBadge + '">' + ext + '</span>'
+            + '<span class="hub-task-title" title="' + escHtml(f.name) + '">' + escHtml(f.name) + '</span>'
+            + '<span style="font-size:8px;color:var(--text-dim);flex-shrink:0;">' + size + '</span>'
+            + actionBtn
+            + '</div>';
+        });
+        html += '</div>';
+        canvasContent.innerHTML = html;
+
+        canvasContent.querySelectorAll('.canvas-edit-btn').forEach(btn => {
+          btn.onclick = (e) => { e.stopPropagation(); openCanvasEditor(btn.dataset.path); };
+        });
+        canvasContent.querySelectorAll('.canvas-view-btn').forEach(btn => {
+          btn.onclick = (e) => { e.stopPropagation(); viewCanvasImage(btn.dataset.path); };
+        });
+      }
+
+      function viewCanvasImage(path) {
+        const url = COMMANDER_API + '/api/canvas/file/view?path=' + encodeURIComponent(path);
+        let viewer = canvasContent.querySelector('.canvas-image-viewer');
+        if (viewer) viewer.remove();
+        viewer = document.createElement('div');
+        viewer.className = 'canvas-image-viewer';
+        viewer.innerHTML = '<div class="hub-section-label">VIEW: ' + escHtml(path.split('/').pop()) + '</div>'
+          + '<img src="' + url + '" alt="canvas" style="max-width:100%;max-height:60vh;object-fit:contain;background:#1e293b;border-radius:6px;">'
+          + '<div style="margin-top:6px;"><button class="ctrl-btn-sm" onclick="this.closest(\'.canvas-image-viewer\').remove()">CLOSE</button></div>';
+        canvasContent.appendChild(viewer);
+      }
+
+      async function openCanvasEditor(path) {
+        try {
+          const res = await fetch(COMMANDER_API + '/api/canvas/file?path=' + encodeURIComponent(path));
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const data = await res.json();
+          // Show inline editor
+          let editor = canvasContent.querySelector('.canvas-editor');
+          if (editor) editor.remove();
+          editor = document.createElement('div');
+          editor.className = 'canvas-editor';
+          editor.innerHTML = '<div class="hub-section-label">EDITING: ' + escHtml(path.split('/').pop()) + '</div>'
+            + '<textarea class="canvas-textarea" id="canvasEditorArea">' + escHtml(data.content) + '</textarea>'
+            + '<div style="margin-top:6px;display:flex;gap:6px;justify-content:flex-end;">'
+            + '<button class="ctrl-btn-sm" id="canvasSaveBtn">SAVE</button>'
+            + '<button class="ctrl-btn-sm" id="canvasCancelBtn">CANCEL</button>'
+            + '</div>';
+          canvasContent.appendChild(editor);
+          document.getElementById('canvasCancelBtn').onclick = () => editor.remove();
+          document.getElementById('canvasSaveBtn').onclick = async () => {
+            const content = document.getElementById('canvasEditorArea').value;
+            try {
+              const saveRes = await fetch(COMMANDER_API + '/api/canvas/file', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: path, content: content })
+              });
+              if (!saveRes.ok) throw new Error('HTTP ' + saveRes.status);
+              appendLog('ego', '[CANVAS] Saved: ' + path);
+              editor.remove();
+              loadCanvasFiles();
+            } catch (err) {
+              appendLog('ego', '[CANVAS] Save failed: ' + err.message);
+            }
+          };
+        } catch (err) {
+          appendLog('ego', '[CANVAS] Load failed: ' + err.message);
+        }
+      }
+
+      // Upload handler
+      canvasFileInput.onchange = async () => {
+        const file = canvasFileInput.files[0];
+        if (!file) return;
+        const form = new FormData();
+        form.append('file', file);
+        try {
+          const res = await fetch(COMMANDER_API + '/api/canvas/upload', { method: 'POST', body: form });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const data = await res.json();
+          appendLog('ego', '[CANVAS] Uploaded: ' + data.filename);
+          loadCanvasFiles();
+        } catch (err) {
+          appendLog('ego', '[CANVAS] Upload failed: ' + err.message);
+        }
+        canvasFileInput.value = '';
+      };
+
+      // Auto-load canvas when panel opens
+      const origCanvasClick = document.getElementById('btn-canvas').onclick;
+      document.getElementById('btn-canvas').onclick = (e) => {
+        origCanvasClick && origCanvasClick(e);
+        setTimeout(() => {
+          if (document.getElementById('panel-canvas').classList.contains('active')) {
+            loadCanvasFiles();
+          }
+        }, 50);
+      };
+
+      document.getElementById('canvas-refresh-btn').onclick = loadCanvasFiles;
+
+      // Keyboard shortcut: Shift+H for Hub
+      document.addEventListener('keydown', (e) => {
+        if (e.shiftKey && e.key === 'H' && !e.ctrlKey && !e.altKey) {
+          document.getElementById('btn-hub').click();
+        }
+      });
+
+      // Fetch WS_PORT from commander_api config, then connect
+      (async () => {
+        try {
+          const cfgRes = await fetch(COMMANDER_API + '/api/ego-gate-config');
+          if (cfgRes.ok) {
+            const cfg = await cfgRes.json();
+            if (cfg.ws_port) WS_PORT = cfg.ws_port;
+          }
+        } catch (_) { /* fallback to default 8080 */ }
+        connect();
+      })();
     })();
   </script>
 </body>

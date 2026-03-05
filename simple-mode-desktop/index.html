@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>EgoGate HUD v2.1 (JARVIS)</title>
+  <title>EgoGate HUD v2.1</title>
   <link rel="stylesheet" href="index.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -30,8 +30,8 @@
 
     <!-- Main HUD Viewport -->
     <main class="hud-viewport">
-      <!-- The JARVIS Orb & Rings -->
-      <div class="jarvis-core">
+      <!-- The HUD Core & Rings -->
+      <div class="egogate-core">
         <div class="hud-ring r1"></div>
         <div class="hud-ring r2"></div>
         <div class="hud-ring r3"></div>
@@ -137,7 +137,7 @@
       let audioEl = null;
       let reconnectAttempts = 0;
 
-      // JARVIS HUD Logic: Reveal Menu
+      // HUD Logic: Reveal Menu
       hexBtn.onclick = () => {
         satDock.classList.toggle('active');
         cmdArea.classList.toggle('active');
@@ -180,7 +180,7 @@
       // WebSocket & State (Core logic preserved)
       function setState(s) {
         egoOrb.className = 'ego-orb ' + s;
-        document.querySelector('.jarvis-core').className = 'jarvis-core ' + s;
+        document.querySelector('.egogate-core').className = 'egogate-core ' + s;
         const labels = {
           idle: 'LINK STABLE', listening: 'SYSTEM LISTENING',
           speaking: 'EGO TRANSMITTING', connected: 'NEURAL SYNC ON',
@@ -201,7 +201,7 @@
 
       function connect() {
         ws = new WebSocket('ws://127.0.0.1:' + WS_PORT);
-        ws.onopen = () => { appendLog('ego', 'JARVIS.sync(completed)'); setState('idle'); };
+        ws.onopen = () => { appendLog('ego', 'EGOGATE.sync(completed)'); setState('idle'); };
         ws.onmessage = (e) => {
           const msg = JSON.parse(e.data);
           if (msg.type === 'audio') {

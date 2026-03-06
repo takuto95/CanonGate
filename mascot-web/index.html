@@ -366,7 +366,8 @@
         });
 
         function setupWebSocket() {
-            ws = new WebSocket('ws://localhost:8080');
+            const wsHost = (window.location.protocol === 'file:') ? 'localhost' : window.location.hostname;
+            ws = new WebSocket('ws://' + wsHost + ':8080');
 
             ws.onopen = () => {
                 console.log('Connected to Alter-Ego Brain');

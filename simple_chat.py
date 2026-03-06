@@ -226,7 +226,7 @@ MAX_HISTORY_MESSAGES = 24
 
 # WebSocket Settings (set WS_PORT env to use another port if 8080 is in use)
 WS_PORT = int(os.getenv("WS_PORT", "8080"))
-WS_HOST = "127.0.0.1"  # IPv4 only to avoid WinError 10048 on Windows
+WS_HOST = os.getenv("WS_HOST", "0.0.0.0")  # 0.0.0.0 for remote access (Xiaomi etc.)
 CONNECTED_CLIENTS = set()
 
 # Hallucination Filter

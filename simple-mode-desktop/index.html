@@ -16,6 +16,7 @@
   <div class="hud-container">
     <!-- Window Controls (Minimalist) -->
     <div class="win-ctrl">
+      <button id="mascot-btn" title="Mascot Mode" style="font-size:12px;">🐾</button>
       <button id="min-btn">ー</button>
       <button id="max-btn">▢</button>
       <button id="close-btn">×</button>
@@ -223,7 +224,8 @@
       }
 
       function connect() {
-        ws = new WebSocket('ws://127.0.0.1:' + WS_PORT);
+        const wsHost = (window.location.protocol === 'file:') ? '127.0.0.1' : window.location.hostname;
+        ws = new WebSocket('ws://' + wsHost + ':' + WS_PORT);
         ws.onopen = () => { appendLog('ego', 'EGOGATE.sync(completed)'); setState('idle'); };
         ws.onmessage = (e) => {
           const msg = JSON.parse(e.data);
@@ -276,13 +278,14 @@
         if (electron) {
           const { ipcRenderer } = electron;
           document.getElementById('min-btn').onclick = () => ipcRenderer.send('minimize-window');
-          documt.gntById('max-btn').onclick = () => ipcRenderer.send('maximize-window');
+          document.getElementById('max-btn').onclick = () => ipcRenderer.send('maximize-window');
           document.getElementById('close-btn').onclick = () => window.close();
+          document.getElementById('mascot-btn').onclick = () => ipcRenderer.send('change-mode', 'mascot');
         }
       } catch (e) { }
 
       // ── Hub Integration (Phase 1 — ADR-0158) ──
-      const COMMANDER_API = 'http://127.0.0.1:8000';
+      const COMMANDER_API = (window.location.protocol === 'file:' ? 'http://127.0.0.1:8000' : window.location.protocol + '//' + window.location.hostname + ':8000');
       let HUB_DOMAIN = (function () { var p = new URLSearchParams(window.location.search); return p.get('domain') || ''; })();
       const hubContent = document.getElementById('hubContent');
       let hubLoaded = false;
@@ -437,7 +440,7 @@
       function connectHubWs(taskId) {
         if (hubWs) { try { hubWs.close(); } catch (_) { } }
         try {
-          hubWs = new WebSocket(COMMANDER_API.replace('http', 'ws') + '/ws');
+          hubWs = new WebSocket(COMMANDER_API.replace(/^http/, 'ws') + '/ws');
           hubWs.onmessage = (e) => {
             try {
               const msg = JSON.parse(e.data);

@@ -117,7 +117,8 @@
           <div class="hub-loading">LOADING CANVAS FILES...</div>
         </div>
         <div class="panel-footer">
-          <label class="ctrl-btn-sm" style="cursor:pointer;">UPLOAD<input type="file" id="canvasFileInput" accept=".mmd,.svg,.drawio,.excalidraw,.json,.png,.jpg,.jpeg" style="display:none;"></label>
+          <label class="ctrl-btn-sm" style="cursor:pointer;">UPLOAD<input type="file" id="canvasFileInput"
+              accept=".mmd,.svg,.drawio,.excalidraw,.json,.png,.jpg,.jpeg" style="display:none;"></label>
           <button id="canvas-refresh-btn" class="ctrl-btn-sm">REFRESH</button>
         </div>
       </div>
@@ -206,6 +207,12 @@
         stateLabel.textContent = labels[s] || s.toUpperCase();
       }
 
+      function showToast(text) {
+        hubToast.querySelector('.content').textContent = text;
+        hubToast.classList.add('active');
+        setTimeout(() => hubToast.classList.remove('active'), 5000);
+      }
+
       function appendLog(who, text) {
         if (!text) return;
         const div = document.createElement('div');
@@ -230,6 +237,7 @@
             setTimeout(() => { if (!isPlaying) setState('idle'); }, 2000);
           } else if (msg.type === 'hub_alert') {
             appendLog('ego', `[${msg.tag}] ${msg.text}`);
+            showToast(`${msg.tag}: ${msg.text}`);
           }
         };
         ws.onclose = () => { setState('reconnecting'); setTimeout(connect, 3000); };
@@ -268,7 +276,7 @@
         if (electron) {
           const { ipcRenderer } = electron;
           document.getElementById('min-btn').onclick = () => ipcRenderer.send('minimize-window');
-          document.getElementById('max-btn').onclick = () => ipcRenderer.send('maximize-window');
+          documt.gntById('max-btn').onclick = () => ipcRenderer.send('maximize-window');
           document.getElementById('close-btn').onclick = () => window.close();
         }
       } catch (e) { }
@@ -427,7 +435,7 @@
       }
 
       function connectHubWs(taskId) {
-        if (hubWs) { try { hubWs.close(); } catch (_) {} }
+        if (hubWs) { try { hubWs.close(); } catch (_) { } }
         try {
           hubWs = new WebSocket(COMMANDER_API.replace('http', 'ws') + '/ws');
           hubWs.onmessage = (e) => {
@@ -445,11 +453,11 @@
                 appendLog('ego', '[HUB] Task done: ' + (msg.task_id || taskId));
                 setTimeout(loadHubTasks, 1000);
               }
-            } catch (_) {}
+            } catch (_) { }
           };
-          hubWs.onerror = () => {};
+          hubWs.onerror = () => { };
           hubWs.onclose = () => { hubWs = null; };
-        } catch (_) {}
+        } catch (_) { }
       }
 
       // Auto-load hub tasks when panel opens

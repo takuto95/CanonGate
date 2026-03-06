@@ -374,6 +374,12 @@ async def ws_handler(websocket):
                     if text:
                         log.info(f"Text Input: {text}")
                         await INPUT_QUEUE.put(text)
+                elif data.get("type") == "log" and data.get("voice"):
+                    # ADR-0158: API 経由の即時通知
+                    msg = data.get("message")
+                    if msg:
+                        log.info(f"Direct Voice Notify: {msg}")
+                        asyncio.create_task(play_audio_from_text(msg))
                 elif data.get("type") == "mute":
                     global MUTED
                     MUTED = data.get("value", False)

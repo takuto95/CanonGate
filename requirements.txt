@@ -7,3 +7,5 @@ requests
 aiohttp
 numpy
 python-dotenv
+kokoro-onnx>=0.5.0
+scipy

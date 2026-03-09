@@ -78,7 +78,12 @@ function createWindow() {
         args.push('--domain', process.argv[domainIdx + 1]);
     }
 
-    pythonProcess = spawn('python', args, {
+    // Resolve Python: prefer sibling .venv, then bare 'python'
+    const fs = require('fs');
+    const venvPython = path.join(__dirname, '..', '.venv', 'Scripts', 'python.exe');
+    const pythonCmd = fs.existsSync(venvPython) ? venvPython : 'python';
+
+    pythonProcess = spawn(pythonCmd, args, {
         cwd: __dirname,
         stdio: 'inherit',
         env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' }

@@ -1,6 +1,18 @@
-# EgoGate (formerly LiveTalkAiAgent) - Alter-Ego Unified Hub
+# CanonGate (formerly EgoGate / LiveTalkAiAgent) - Canon Unified Hub
 
-音声・テキストで会話するデスクトップアプリです。マスコット（VRM）表示と TTS はブラウザ／Electron で再生されます。
+音声・テキストで会話するデスクトップアプリです。マスコット（VRM）表示と TTS はブラウザ／Electron で再生されます。**Canon** リポジトリの `Canon/` と同階層に配置し、`RunAlterEgo.bat` で起動します。
+
+### Canon / CanonGate を別 Git リポジトリにしている場合
+
+**結論: 影響なし（同じ親フォルダに両方 clone していれば）。**
+
+- Canon と CanonGate は **別々の Git リポジトリ** でよく、コード上は **「同じ親ディレクトリの下に `Canon` と `CanonGate` が並んでいる」** という前提だけ満たせば動きます。
+- 例: `c:\work\Canon` と `c:\work\CanonGate` にそれぞれ clone → `RunAlterEgo.bat` の `..\Canon` や、Canon 側の `BASE_DIR.parent / "CanonGate"` が正しく解決します。
+- **別々の場所**に clone した場合（例: Canon は `c:\repos\Canon`、CanonGate は `d:\apps\CanonGate`）は、相対パスが壊れます。そのときは環境変数 `CANON_ROOT`（Canon のルート）と `CANONGATE_DIR`（CanonGate のルート）を設定すると、一部スクリプト（例: zaim_guardian）でパスを上書きできます。Commander API や RunAlterEgo.bat は現状「同じ親」前提のままなので、**運用では同じ親の下に両方置く**ことを推奨します。
+
+**参照先（clone 例）**
+- Canon: `git clone git@github.com:takuto95/Canon.git`
+- CanonGate: `git clone git@github.com:takuto95/CanonGate.git`
 
 ## 初回セットアップ
 
@@ -16,6 +28,17 @@
    - 初回のみ: `pip install -r requirements.txt`  
    - 詳細は `DebugStart.bat` でエラーになったときに実施してください。
 
+4. **環境変数（tech ドメイン＝仕事用で音声応答するために必須）**  
+   - **`GROQ_API_KEY`**: CanonGate の LLM（クラウド・高速応答）に Groq を使う場合に必須。  
+     - 取得: [Groq Console](https://console.groq.com/) でサインアップ → API Keys で「Create API Key」→ 発行されたキーをコピー。  
+     - 設定: **`Canon/.env`** に次の 1 行を追加する（CanonGate は起動時に Canon の `.env` も読みに行きます）。  
+       ```env
+       GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxx
+       ```  
+     - 未設定だと音声入力後の LLM 応答でエラーになります。  
+   - 任意: `GROQ_MODEL=llama-3.3-70b-versatile`（デフォルトのままでも可）、`WS_PORT=8082`（Commander API とポートを揃えたいとき）。  
+   - プライベート（life）のみ使う場合は、Ollama ローカルで完結するため `GROQ_API_KEY` は不要です。
+
 ## 起動方法
 
 ### 簡易モード（図形のみ・デスクトップ）— 推奨
@@ -29,8 +52,11 @@ Electron が simple_chat.py を自動起動し、約2秒後に窓が表示され
 
 ### マスコット版（VRM 表示）
 
-- **`RunAlterEgo.bat`** をダブルクリック  
-  - Electron でマスコットウィンドウ＋ Python（simple_chat.py）を起動。約 12 秒後にウィンドウ表示。
+- **`RunAlterEgo.bat`** をダブルクリック（CanonGate 起動）  
+  - 同階層の `Canon/` で Commander API と ALE を起動したうえで、Electron でマスコットウィンドウ＋ Python（simple_chat.py）を起動。約 12 秒後にウィンドウ表示。  
+  - **ALE はデフォルトで仕事（tech）のみ**。プライベート（life）も回す場合は `RunAlterEgo.bat dual` で起動。
+- **`CanonGate_Silent.vbs`** で起動した場合  
+  - 起動時に **tech / life / dual** の入力ダイアログが出ます。選んだドメインに応じて ALE と simple_chat が動きます。未入力・Cancel は tech。他端末でプライベートだけ使う場合は **life** を選べばよい。
 
 ### デスクトップ以外の起動（参考）
 
@@ -41,7 +67,7 @@ Electron が simple_chat.py を自動起動し、約2秒後に窓が表示され
 | ファイル／フォルダ | 説明 |
 |-------------------|------|
 | **`simple-mode-desktop/`** | **簡易モード（図形）を Electron でデスクトップ起動 — メインの入口** |
-| `RunAlterEgo.bat` | マスコット版デスクトップ起動（Electron + Python） |
+| `RunAlterEgo.bat` | CanonGate 起動（Commander API + ALE + Electron + Python） |
 | `simple_chat.py` | 会話エンジン（Whisper STT, Ollama, Edge TTS, WebSocket） |
 | `main.js` | マスコット版 Electron メイン（ルートで npm start 時） |
 | `mascot-web/` | マスコット UI（VRM 表示用） |

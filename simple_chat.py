@@ -2,7 +2,12 @@ import os
 import sys
 from dotenv import load_dotenv
 
+# 1) CanonGate 直下の .env
 load_dotenv()
+# 2) Canon の .env（同じ親の Canon/.env があれば読み、GROQ_API_KEY 等を共有）
+_canon_dotenv = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Canon", ".env")
+if os.path.isfile(_canon_dotenv):
+    load_dotenv(_canon_dotenv)
 import socket
 import threading
 import queue
@@ -41,7 +46,7 @@ if sys.platform == "win32":
         pass
 
 # --- P4: Structured Logging ---
-log = logging.getLogger("alter-ego")
+log = logging.getLogger("canon-gate")
 log.setLevel(logging.DEBUG)
 _sh = logging.StreamHandler(sys.stdout)
 _sh.setFormatter(logging.Formatter("[%(asctime)s %(levelname)s] %(message)s", datefmt="%H:%M:%S"))
@@ -49,16 +54,20 @@ log.addHandler(_sh)
 
 # BASE_DIR and folder paths
 SCRIPT_DIR = Path(__file__).parent.resolve()
-_egogate_log_dir = SCRIPT_DIR / "logs"
-_egogate_log_dir.mkdir(exist_ok=True)
-HEARTBEAT_FILE = _egogate_log_dir / "ale_heartbeat.tmp"
+_canongate_log_dir = SCRIPT_DIR / "logs"
+_canongate_log_dir.mkdir(exist_ok=True)
+HEARTBEAT_FILE = _canongate_log_dir / "ale_heartbeat.tmp"
 BASE_DIR = SCRIPT_DIR.parent / "Canon"
 if not BASE_DIR.exists():
     BASE_DIR = SCRIPT_DIR.parent / "Alter-Ego"  # Fallback for transition period
 
+# TASK_NEW/ADR_NEW 確認ダイアログ用（ws_handler とメインループで共有）
+PENDING_ACTIONS = {}
+ACTION_COUNTER = [0]
+
 # Optional file handler (logs/ dir)
 try:
-    _fh = logging.FileHandler(_egogate_log_dir / "alter-ego.log", encoding="utf-8")
+    _fh = logging.FileHandler(_canongate_log_dir / "canon-gate.log", encoding="utf-8")
     _fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     _fh.setLevel(logging.INFO)
     log.addHandler(_fh)
@@ -222,6 +231,8 @@ HUB_PRIORITY_TAGS = {
     "[ALE_START]": "🚀 オートループが動き出したよ！",
     "[MORNING]": "☀️ おはよう！今日のブリーフィングだよ！",
     "[MUSING]": "🧠 独り言だけど、いいかな？",
+    "[WORK_TASK]": "📋 仕事タスクの状況だよ！",
+    "[CANON_RAN]": "🤖 Canon が仕事タスクを実行したよ！",
 }
 
 # Groq Settings (ADR-0114: Cloud Speed optimization)
@@ -399,6 +410,8 @@ def audio_callback(indata, frames, time, status):
 async def ws_handler(websocket):
     log.info("WS Client connected")
     CONNECTED_CLIENTS.add(websocket)
+    # 接続直後にタスク一覧を送り、仕事/生活の一覧がすぐ出るようにする
+    asyncio.create_task(manual_task_sync())
     # if len(CONNECTED_CLIENTS) == 1:
     #    asyncio.create_task(play_audio_from_text("接続したよ。画面を一度クリックすると、私の声が聞こえるよ。"))
     try:
@@ -479,6 +492,33 @@ async def ws_handler(websocket):
                     log.info(f"Task Stop: {task_id}")
                     await broadcast_ws({"type": "task_status_change", "task_id": task_id, "status": "stopped"})
                     asyncio.create_task(play_audio_from_text(f"タスクを停止したよ。"))
+                elif data.get("type") == "confirm_action":
+                    # TASK_NEW/ADR_NEW の確認ダイアログで「はい」が押されたときの処理
+                    action_id = data.get("action_id")
+                    confirmed = data.get("confirmed", False)
+                    if action_id and action_id in PENDING_ACTIONS and confirmed:
+                        entry = PENDING_ACTIONS.pop(action_id)
+                        if entry.get("type") == "task":
+                            content = (entry.get("content") or "").strip()
+                            if content:
+                                import re
+                                safe_name = re.sub(r'[\\/:*?"<>|]', "_", content)[:80].strip() or "新規タスク"
+                                gtd_dir = BASE_DIR / ".agent" / "gtd"
+                                domain = "work" if CURRENT_DOMAIN == "tech" else "private"
+                                next_dir = gtd_dir / domain / "next-actions"
+                                next_dir.mkdir(parents=True, exist_ok=True)
+                                task_path = next_dir / f"{safe_name}.md"
+                                if not task_path.exists():
+                                    task_path.write_text(f"# {content}\n\n", encoding="utf-8")
+                                    log.info(f"Task created: {task_path}")
+                                    asyncio.create_task(manual_task_sync())
+                                    asyncio.create_task(play_audio_from_text("了解、タスクを追加しておいたよ。"))
+                                else:
+                                    log.info(f"Task file already exists, skipping: {task_path}")
+                        elif entry.get("type") == "adr":
+                            log.info(f"ADR creation approved (not yet implemented): {entry.get('content')}")
+                    elif action_id and not confirmed:
+                        PENDING_ACTIONS.pop(action_id, None)
                 elif data.get("type") == "task_complete":
                      task_id = data.get("task_id")
                      domain = "work" if data.get("is_work") else "private"
@@ -658,7 +698,9 @@ async def play_audio_from_text(text, rate=TTS_SPEED, pitch=TTS_PITCH):
     P3: リトライ付きエラーハンドリング。失敗時は UI にエラー通知。
     """
     global AI_SPEAKING, SHOULD_INTERRUPT
-    # 中断フラグが立っていたら再生をスキップ
+    # 声 On/Off ボタンで Off のときは一切再生しない（全経路でここを通る）
+    if MUTED:
+        return
     if SHOULD_INTERRUPT:
         return
 
@@ -962,83 +1004,80 @@ async def mic_monitoring_task(whisper):
             await asyncio.sleep(1)
 
 async def file_watcher_task(filename):
-    """Watch a log file for new lines using standard IO.
+    """Watch a log file for new lines by polling (open → read new → close).
     ADR-0119 HUB化: 優先度タグ([URGENT],[SLACK]等)を検知したら即座に音声で割り込む。
+    Windows/同一プロセス書き込みでも追記を確実に検知するため、ファイルを開きっぱなしにしない。
     """
     log.info(f"File watcher (HUB mode) started: {filename}")
     log_path = Path(__file__).parent / "logs" / filename
-    if not log_path.exists(): log_path.touch()
+    if not log_path.exists():
+        log_path.touch()
+    # 起動後の追記だけ音声化するため、現在の末尾から監視開始
+    last_size = log_path.stat().st_size
 
-    # Initial seek to end
-    with open(log_path, 'r', encoding='utf-8') as f:
-        f.seek(0, 2)
-        while True:
-            try:
-                line = f.readline()
-                if not line:
-                    await asyncio.sleep(0.5)
-                    continue
+    while True:
+        try:
+            with open(log_path, 'r', encoding='utf-8') as f:
+                f.seek(last_size)
+                new_content = f.read()
+                last_size = f.tell()
 
+            for line in new_content.splitlines():
                 line = line.strip()
                 if not line:
                     continue
 
                 log.info(f"HUB Log detected: {line}")
-                
-                # ADR-0119: 優先度タグによる即時音声割り込み
-                # & ADR-0121: LLM への文脈共有
+
                 interrupted = False
                 for tag, prefix_voice in HUB_PRIORITY_TAGS.items():
                     if tag in line:
                         content = line.replace(tag, "").strip()
-                        # 文中のタイムスタンプ等を削る簡易クレンジング
-                        if "]" in content: content = content.split("]", 1)[-1].strip()
-                        
+                        if "]" in content:
+                            content = content.split("]", 1)[-1].strip()
+
                         voice_msg = f"{prefix_voice}。内容は、{content}"
-                        # [PATROL] の場合は音声読み上げを少し短縮して HUD 表示を優先
                         if tag == "[PATROL]":
                             await broadcast_ws({"type": "chat", "who": "ego", "text": f"【パトロール】{content}", "tag": "patrol"})
                         else:
                             await broadcast_ws({"type": "hub_alert", "tag": tag, "text": content})
-                        
+
                         log.info(f"HUB Priority interrupt: {voice_msg}")
-                        
-                        # 音声は Mute 時はスキップ
+
                         if not MUTED:
                             await play_audio_from_text(voice_msg)
-                        
-                        # 3. LLM の INPUT_QUEUE にも流す
+
                         await INPUT_QUEUE.put({"text": f"【システム通知】{tag}{content}", "stt_duration": 0})
-                        
                         interrupted = True
-                
+
                 if not interrupted and "[SYSTEM_REPORT]" in line:
-                    # 通常のレポート → LLMに渡して要約させる
                     content = line.replace("[SYSTEM_REPORT]", "").strip()
                     await broadcast_ws({"type": "chat", "who": "ego", "text": f"【システムレポート】{content}", "tag": "patrol"})
                     await INPUT_QUEUE.put({"text": f"【システムレポート】{content}", "stt_duration": 0})
-                
+
                 if not interrupted:
-                    # 一般的な通知
-                    # 不要な読み上げや heartbeat ログをスキップ
                     noise_filters = ["ale_heartbeat", "heartbeat"]
                     if not any(noise in line for noise in noise_filters):
-                         # HUB の読み上げが多すぎると煩わしいため、一般ログは読み上げず UI 表示のみを基本とする
-                         log.info(f"HUB General Log (UI only): {line}")
-                         # await broadcast_ws({"type": "chat", "who": "ego", "text": line, "tag": "log"}) # Optional: logging to UI
+                        log.info(f"HUB General Log (UI only): {line}")
 
-            except Exception as e:
-                log.warning(f"File Watch Error: {e}")
-                await asyncio.sleep(5)
+        except Exception as e:
+            log.warning(f"File Watch Error: {e}")
+            last_size = 0
+            await asyncio.sleep(5)
+
+        await asyncio.sleep(0.5)
 
 async def manual_task_sync():
-    """Immediately scans and broadcasts GTD tasks to HUD."""
+    """Immediately scans and broadcasts GTD tasks to HUD.
+    tech モード = 仕事（work）だけ表示。life モード = 生活（private）だけ表示。
+    """
     inbox_dir = BASE_DIR / ".agent" / "inbox"
     gtd_dir = BASE_DIR / ".agent" / "gtd"
-    
+    # tech → 仕事だけ / life → 生活だけ（VBS で tech 選択時は生活タスクを出さない）
+    domains_to_scan = ["work"] if CURRENT_DOMAIN == "tech" else ["private"]
+
     tasks = []
-    # Scan GTD folders (Next-Actions and Evaluating)
-    for domain in ["work", "private"]:
+    for domain in domains_to_scan:
         for folder in ["next-actions", "evaluating"]:
             target_dir = gtd_dir / domain / folder
             if target_dir.exists():
@@ -1049,12 +1088,12 @@ async def manual_task_sync():
                     title = f.stem
                     category = "ego_proposal"
                     if folder == "evaluating":
-                        category = "user_decision" # Needs final approval
+                        category = "user_decision"
                     elif "【実行中】" in title:
                         category = "ego_running" if ("EGO" in title or "ALE" in title) else "user_running"
                     elif "【要整理】" in title:
                         category = "needs_org"
-                    
+
                     tasks.append({
                         "id": f.name,
                         "title": title.replace("【実行中】","").replace("【要整理】","").strip(),
@@ -1062,18 +1101,17 @@ async def manual_task_sync():
                         "is_work": is_work
                     })
 
-    # Check INBOX for special items like Discussion Notes
-    if inbox_dir.exists():
-        for f in inbox_dir.glob("協議メモ-*.md"):
-            is_work = "work" in str(f).lower()
+    # 協議メモ: tech 時は work/inbox のみ、life 時は従来の inbox
+    inbox_for_notes = (gtd_dir / "work" / "inbox") if CURRENT_DOMAIN == "tech" else inbox_dir
+    if inbox_for_notes.exists():
+        for f in inbox_for_notes.glob("協議メモ-*.md"):
             tasks.append({
                 "id": f.name,
                 "title": f.stem,
                 "category": "user_decision",
-                "is_work": is_work
+                "is_work": (CURRENT_DOMAIN == "tech")
             })
 
-    # Always broadcast, even if empty, to clear the HUD if all tasks are finished
     await broadcast_ws({"type": "tasks", "tasks": tasks})
 
 async def heartbeat_task():
@@ -1123,14 +1161,14 @@ async def idle_muttering_task():
         if AI_SPEAKING:
             continue
             
-        # 20%の確率でタスク件数に触れる
+        # 20%の確率でタスク件数に触れる（tech=仕事だけ / life=生活だけ）
         if random.random() < 0.2:
             try:
-                # 簡易的に Next-Actions の数を数える
                 gtd_dir = BASE_DIR / ".agent" / "gtd"
-                task_files = list(gtd_dir.glob("**/next-actions/*.md"))
-                eval_files = list(gtd_dir.glob("**/evaluating/*.md"))
-                count = len(task_files) + len(eval_files)
+                domain = "work" if CURRENT_DOMAIN == "tech" else "private"
+                task_files = list((gtd_dir / domain / "next-actions").glob("*.md")) if (gtd_dir / domain / "next-actions").exists() else []
+                eval_files = list((gtd_dir / domain / "evaluating").glob("*.md")) if (gtd_dir / domain / "evaluating").exists() else []
+                count = len([f for f in task_files + eval_files if not f.name.startswith("auto_") and f.name.lower() != "readme.md"])
                 if count > 0:
                     musing = f"今、HUDには {count}件のタスクが出てるよ。一緒に頑張ろうね！"
                 else:
@@ -1165,7 +1203,7 @@ async def main_async():
         if getattr(e, 'errno', None) == 10048 or 'Address already in use' in str(e):
             log.error(f"Port {WS_PORT} is already in use (OSError {e.errno}).")
             log.error(f"To use a different port: set WS_PORT=8081 (then restart).")
-            log.error(f"EgoGate UI will auto-detect the port via commander_api /api/ego-gate-config.")
+            log.error("CanonGate UI will auto-detect the port via commander_api /api/canon-gate-config.")
             raise SystemExit(1)
         raise
 
@@ -1226,7 +1264,7 @@ async def main_async():
     asyncio.create_task(file_watcher_task("report.log"))
     asyncio.create_task(heartbeat_task())
     asyncio.create_task(idle_muttering_task())
-    _egogate_log_dir.mkdir(exist_ok=True)  # ensure logs dir exists for heartbeat
+    _canongate_log_dir.mkdir(exist_ok=True)  # ensure logs dir exists for heartbeat
     
     # Phase 4: Start LiveCanvas server
     canvas_dir = SCRIPT_DIR / "canvas"
@@ -1291,10 +1329,6 @@ async def main_async():
                 )
             }]
 
-            # Pending actions waiting for UI confirmation
-            pending_actions = {}
-            action_counter = [0]
-
             async def process_ai_actions(response_text):
                 """AI の応答に含まれる [TASK_NEW], [ADR_NEW] タグを検出し、UIに確認ダイアログを送る"""
                 import re
@@ -1302,9 +1336,9 @@ async def main_async():
                 # [TASK_NEW: ...] の処理
                 new_tasks = re.findall(r"\[TASK_NEW:\s*(.*?)\]", response_text)
                 for task_content in new_tasks:
-                    action_counter[0] += 1
-                    action_id = f"task_{action_counter[0]}"
-                    pending_actions[action_id] = {"type": "task", "content": task_content}
+                    ACTION_COUNTER[0] += 1
+                    action_id = f"task_{ACTION_COUNTER[0]}"
+                    PENDING_ACTIONS[action_id] = {"type": "task", "content": task_content}
                     await broadcast_ws({
                         "type": "confirm_dialog",
                         "action_id": action_id,
@@ -1315,9 +1349,9 @@ async def main_async():
                 # [ADR_NEW: ...] の処理
                 new_adrs = re.findall(r"\[ADR_NEW:\s*(.*?)\]", response_text)
                 for adr_content in new_adrs:
-                    action_counter[0] += 1
-                    action_id = f"adr_{action_counter[0]}"
-                    pending_actions[action_id] = {"type": "adr", "content": adr_content}
+                    ACTION_COUNTER[0] += 1
+                    action_id = f"adr_{ACTION_COUNTER[0]}"
+                    PENDING_ACTIONS[action_id] = {"type": "adr", "content": adr_content}
                     await broadcast_ws({
                         "type": "confirm_dialog",
                         "action_id": action_id,
@@ -1345,6 +1379,12 @@ async def main_async():
                 # [HUD] 入力を受け取ったら即座に「思考中」状態にする
                 await broadcast_ws({"type": "state", "state": "thinking"})
                 await broadcast_ws({"type": "chat", "who": "user", "text": user_text_corrected})
+
+                # システム通知は表示のみ。Canon は発言せずスキップ（ユーザー発言と混同しない）
+                if user_text_corrected.startswith("【システム通知】") or user_text_corrected.startswith("【システムレポート】"):
+                    log.info(f"System notification skipped (no LLM reply): {user_text_corrected[:60]}...")
+                    await broadcast_ws({"type": "state", "state": "listening"})
+                    continue
 
                 # RAG Context Injection（技術的な話題のときだけ知識を注入）
                 rag_context = ""

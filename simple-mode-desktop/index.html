@@ -56,6 +56,11 @@
             <div class="wave-bar"></div>
           </div>
           <div style="display: flex; align-items: center; gap: 15px; width: 100%;">
+            <button class="voice-btn mic-btn" id="voiceBtn" title="Canonの声 On/Off">
+              <svg viewBox="0 0 24 24" id="voiceBtnSvg">
+                <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+              </svg>
+            </button>
             <button class="mic-btn" id="micBtn">
               <svg viewBox="0 0 24 24">
                 <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
@@ -206,7 +211,7 @@
             + `<span style="font-size:9px; opacity:0.5;">${displayLabel}</span>`
             + `<span style="font-size:11px;">${title}</span>`
             + `</div>`
-            + `<button class="dash-card-btn" onclick="handleTask('${t.id}', '${c}')">${btnLabel}</button>`
+            + `<button class="dash-card-btn" onclick="handleTask('${t.id}', '${c}', ${t.is_work})">${btnLabel}</button>`
             + `</div>`;
         });
         container.innerHTML = html;
@@ -305,10 +310,20 @@
     window.addEventListener('keydown', unlockAudio, { once: true });
     window.addEventListener('touchstart', unlockAudio, { once: true });
 
-    // WebSocket Logic
+    // WebSocket Logic（ポートは Commander API から取得、未取得時は 8082）
     let ws = null;
-    function connect() {
-      ws = new WebSocket('ws://localhost:8082/ws');
+    let wsPort = 8082;
+    async function connect() {
+      try {
+        const cfg = await fetch('http://localhost:8000/api/canon-gate-config').then(r => r.json()).catch(() => ({}));
+        if (cfg.ws_port) wsPort = cfg.ws_port;
+      } catch (e) { }
+      const url = 'ws://localhost:' + wsPort + '/ws';
+      ws = new WebSocket(url);
+      ws.onopen = () => {
+        showToast('Canon に接続しました');
+        addThought('SYSTEM: Canon (音声) に接続しました');
+      };
       ws.onmessage = (e) => {
         try {
           const msg = JSON.parse(e.data);
@@ -344,6 +359,13 @@
             setStateValue('val-lvl', msg.lvl);
             const xpBar = document.getElementById('bar-xp');
             if (xpBar) xpBar.style.width = msg.xp_percent + '%';
+          }
+
+          if (msg.type === 'state_change') {
+            if (typeof voiceOn !== 'undefined') {
+              voiceOn = (msg.state !== 'muted');
+              updateVoiceButton();
+            }
           }
 
           if (msg.type === 'tasks') renderTasks(msg.tasks);
@@ -405,8 +427,14 @@
           console.error("WS Parse Error:", err);
         }
       };
-      ws.onclose = () => setTimeout(connect, 3000);
-      ws.onerror = (err) => console.error("WS Error:", err);
+      ws.onclose = () => {
+        showToast('Canon から切断されました。再接続します…');
+        setTimeout(connect, 3000);
+      };
+      ws.onerror = (err) => {
+        console.error("WS Error:", err);
+        showToast('音声エンジンに接続できません (port ' + wsPort + ')。simple_chat が起動しているか確認してください。');
+      };
     }
     connect();
 
@@ -449,6 +477,27 @@
 
     micBtn.onclick = toggleMic;
 
+    // Canon の声 On/Off（マイクの隣）
+    let voiceOn = true;
+    const voiceBtn = document.getElementById('voiceBtn');
+    const voiceBtnSvg = document.getElementById('voiceBtnSvg');
+    const voiceSvgOn = '<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>';
+    const voiceSvgOff = '<path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>';
+    function updateVoiceButton() {
+      voiceBtn.classList.toggle('muted', !voiceOn);
+      voiceBtn.title = voiceOn ? 'Canonの声 On（クリックでOff）' : 'Canonの声 Off（クリックでOn）';
+      if (voiceBtnSvg) voiceBtnSvg.innerHTML = voiceOn ? voiceSvgOn : voiceSvgOff;
+    }
+    function toggleVoice() {
+      if (!ws || ws.readyState !== 1) return;
+      voiceOn = !voiceOn;
+      ws.send(JSON.stringify({ type: 'mute', value: !voiceOn }));
+      updateVoiceButton();
+      showToast(voiceOn ? 'Canonの声: On' : 'Canonの声: Off');
+    }
+    voiceBtn.onclick = toggleVoice;
+    updateVoiceButton();
+
     // Keyboard PTT (Space) or Toggle (optional)
     window.onkeydown = (e) => {
       if (e.key === '/' && document.activeElement !== commandInput) {
@@ -466,12 +515,13 @@
       // OR we support both. Let's stick to Toggle for now as requested.
     };
 
-    window.handleTask = (id, cat) => {
+    window.handleTask = (id, cat, is_work) => {
       if (ws && ws.readyState === 1) {
-        if (cat === 'user_decision') ws.send(JSON.stringify({ type: 'task_approve', task_id: id }));
-        else if (cat === 'ego_running') ws.send(JSON.stringify({ type: 'task_stop', task_id: id }));
-        else if (cat === 'user_running') ws.send(JSON.stringify({ type: 'task_complete', task_id: id }));
-        else ws.send(JSON.stringify({ type: 'task_execute', task_id: id }));
+        const payload = (type) => ({ type, task_id: id, is_work: !!is_work });
+        if (cat === 'user_decision') ws.send(JSON.stringify(payload('task_approve')));
+        else if (cat === 'ego_running') ws.send(JSON.stringify(payload('task_stop')));
+        else if (cat === 'user_running') ws.send(JSON.stringify(payload('task_complete')));
+        else ws.send(JSON.stringify(payload('task_execute')));
         showToast('SEND_COMMAND: ' + id);
       }
     };

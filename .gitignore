@@ -1,7 +1,7 @@
-が
 .venv/
 __pycache__/
 *.log
+.env
 .env.local
 vtube_token.txt
 vseeface_config.json
@@ -11,3 +11,4 @@ dist/
 build/
 .DS_Store
 *.zip
+system_reports/

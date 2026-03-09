@@ -1,5 +1,9 @@
 import os
 import sys
+from dotenv import load_dotenv
+
+load_dotenv()
+import socket
 import threading
 import queue
 import logging
@@ -20,28 +24,19 @@ from datetime import datetime
 from pathlib import Path
 from faster_whisper import WhisperModel
 import argparse
+from kokoro_onnx import Kokoro
+import scipy.io.wavfile as wavfile
+import io
 
-# Alter-Ego Domain-Based Env Loader
-# Add project root to sys.path
-sys.path.append(str(Path(__file__).parent.parent / "Alter-Ego"))
-from scripts.utils.env_loader import load_domain_env
+from canvas_server import start_canvas_server
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--domain", choices=["tech", "life"], default="tech")
-args = parser.parse_args()
-CURRENT_DOMAIN = args.domain
-
-# Load specific environment for this brain instance
-load_domain_env(CURRENT_DOMAIN)
-
-# Windows: CP932 で表現できない文字（例: 一部CJK）で print が落ちないよう stdout/stderr を UTF-8 に
+# Windows: CP932 で表現できない文字で print が落ちないよう stdout/stderr を UTF-8 に
 if sys.platform == "win32":
     try:
-        import io
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
-        # ADR-0114: Windows で aiohttp/edge-tts が DNS エラーを吐く問題の修正
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        os.environ["PYTHONUTF8"] = "1"
+        os.environ["PYTHONIOENCODING"] = "utf-8"
     except Exception:
         pass
 
@@ -51,19 +46,41 @@ log.setLevel(logging.DEBUG)
 _sh = logging.StreamHandler(sys.stdout)
 _sh.setFormatter(logging.Formatter("[%(asctime)s %(levelname)s] %(message)s", datefmt="%H:%M:%S"))
 log.addHandler(_sh)
+
+# BASE_DIR and folder paths
+SCRIPT_DIR = Path(__file__).parent.resolve()
+_egogate_log_dir = SCRIPT_DIR / "logs"
+_egogate_log_dir.mkdir(exist_ok=True)
+HEARTBEAT_FILE = _egogate_log_dir / "ale_heartbeat.tmp"
+BASE_DIR = SCRIPT_DIR.parent / "Canon"
+if not BASE_DIR.exists():
+    BASE_DIR = SCRIPT_DIR.parent / "Alter-Ego"  # Fallback for transition period
+
 # Optional file handler (logs/ dir)
 try:
-    _log_dir = Path(__file__).parent / "logs"
-    _log_dir.mkdir(exist_ok=True)
-    _fh = logging.FileHandler(_log_dir / "alter-ego.log", encoding="utf-8")
+    _fh = logging.FileHandler(_egogate_log_dir / "alter-ego.log", encoding="utf-8")
     _fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     _fh.setLevel(logging.INFO)
     log.addHandler(_fh)
 except Exception:
     pass
 
-# --- Configuration ---
-SCRIPT_DIR = Path(__file__).parent.resolve()
+# Alter-Ego Domain-Based Env Loader
+sys.path.append(str(BASE_DIR))
+sys.path.append(str(BASE_DIR / "scripts"))
+
+try:
+    from utils.env_loader import load_domain_env
+except ImportError:
+    def load_domain_env(domain): pass
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--domain", choices=["tech", "life"], default="tech")
+args = parser.parse_args()
+CURRENT_DOMAIN = args.domain
+
+# Load specific environment for this brain instance
+load_domain_env(CURRENT_DOMAIN)
 
 # Audio Settings (Input)
 MIC_SAMPLE_RATE = 16000
@@ -182,12 +199,13 @@ def resolve_mic_device(raw_value=None):
 
 MIC_DEVICE_ID = resolve_mic_device(MIC_DEVICE_ID_RAW)
 
-# P2: VAD Settings — 環境変数で調整可能 (ADR-0120 デフォルト値を維持)
-VAD_RMS_THRESHOLD = float(os.getenv("VAD_RMS_THRESHOLD", "0.002"))
-VAD_SILENCE_DURATION = float(os.getenv("VAD_SILENCE_DURATION", "0.8"))
+# P2: VAD Settings
+VAD_RMS_THRESHOLD = float(os.getenv("VAD_RMS_THRESHOLD", "0.003")) # Increased from 0.0015 to 0.003
+VAD_SILENCE_DURATION = float(os.getenv("VAD_SILENCE_DURATION", "0.5")) # Shorter silence for faster response
 MAX_RECORDING_DURATION = float(os.getenv("MAX_RECORDING_DURATION", "15.0"))
-# P2: Barge-in 感度倍率 (デフォルト: VAD_RMS_THRESHOLD * 2.0)
-BARGEIN_RMS_MULTIPLIER = float(os.getenv("BARGEIN_RMS_MULTIPLIER", "2.0"))
+# P2: Barge-in 感度倍率（デフォルト: VAD_RMS_THRESHOLD * 5.0）
+# 低い値だとユーザーの声の余韻やVOICEVOX出力でバージインが誤発火する
+BARGEIN_RMS_MULTIPLIER = float(os.getenv("BARGEIN_RMS_MULTIPLIER", "5.0"))
 
 # P3: TTS リトライ回数
 TTS_MAX_RETRIES = int(os.getenv("TTS_MAX_RETRIES", "2"))
@@ -200,32 +218,46 @@ HUB_PRIORITY_TAGS = {
     "[DEVIN]": "🤖 Devinからレポートが来たよ！",
     "[FINANCE]": "💰 家計簿のチェック結果だよ！",
     "[SYSTEM_REPORT]": "📊 システムレポートが届いたよ！",
+    "[PATROL]": "🔍 パトロール報告だよ！",
+    "[ALE_START]": "🚀 オートループが動き出したよ！",
+    "[MORNING]": "☀️ おはよう！今日のブリーフィングだよ！",
     "[MUSING]": "🧠 独り言だけど、いいかな？",
 }
 
-# Ollama Settings
+# Groq Settings (ADR-0114: Cloud Speed optimization)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY") # Use .env
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_TIMEOUT = 10.0 # 少し余裕を持たせる
+
+# Ollama Settings (Local Fallback)
 OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
 
-# Whisper STT Settings (ADR-0114: large-v3-turbo=爆速高精度)
-WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "large-v3-turbo")
+# Whisper STT Settings (Speed-focused on CPU)
+WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "base")
 WHISPER_INITIAL_PROMPT = (
-    "イディアル ADR 編集中 エディアル ステージング 承認 メール 検証 設定 チェック 出せる 確認 "
-    "アルターエゴ レポート パトロール 記録 検討 メモ 覚えて 聞こえない 認識 音声 "
-    "HiDock P1 BlueCatch OpenRun Shokz ハイドック ブルーキャッチ ショックス "
-    "スクラム プルリク DataBee プルリクエスト マージ リリース デプロイ"
+    "あ、えーと、あの、その、えー、アルターエゴ、ADR、エゴゲート、Xiaomi、"
+    "Cursor、ClaudeCode、ステータス、パトロール、報告、検討、記録。"
 )
 
-# TTS Settings (Microsoft Edge Voice — Cute Voice)
-TTS_VOICE = "ja-JP-NanamiNeural"
+# TTS Settings
+# ADR-0114: Edge-TTS (Online/Cute)
+TTS_VOICE_EDGE = "ja-JP-NanamiNeural"
 TTS_SPEED = "+10%"
 TTS_PITCH = "+20Hz"
+
+# ADR-0158: Kokoro-ONNX (Local/Offline/Stable)
+# kokoro model paths
+KOKORO_MODEL_PATH = str(SCRIPT_DIR / "livekit-voice-adr" / "voices" / "kokoro" / "kokoro-v0_19_int8.onnx")
+KOKORO_VOICES_PATH = str(SCRIPT_DIR / "livekit-voice-adr" / "voices" / "kokoro" / "voices.bin")
+TTS_VOICE_KOKORO = "jf_alpha" # Japanese female
 
 # Conversation History: system prompt + 直近 N メッセージを保持（長時間対話の劣化防止）
 MAX_HISTORY_MESSAGES = 24
 
-# WebSocket Settings (set WS_PORT env to use another port if 8080 is in use)
-WS_PORT = int(os.getenv("WS_PORT", "8080"))
+# WebSocket Settings (set WS_PORT env to use another port if 8082 is in use)
+WS_PORT = int(os.getenv("WS_PORT", "8082"))
 WS_HOST = os.getenv("WS_HOST", "0.0.0.0")  # 0.0.0.0 for remote access (Xiaomi etc.)
 CONNECTED_CLIENTS = set()
 
@@ -246,6 +278,7 @@ HALLUCINATION_PHRASES = [
     "犬が木",
     "イホッキー",
     "クリスティナット",
+    "ミルクリング", # Whisper hallucination / Mercari mishearing
 ]
 
 # WHISPER_INITIAL_PROMPT 漏れ検出: prompt 内のキーワードが大量に含まれていたらハルシネーション
@@ -263,6 +296,7 @@ THOUGHT_LOG_PATH = Path(__file__).parent / "logs" / "raw_thoughts.log"
 # Barge-in / Interruption control
 SHOULD_INTERRUPT = False
 AI_SPEAKING = False # Track if AI is currently speaking or generating
+USER_RECORDING = False # Manual Toggle / PTT Flag
 
 # 音声認識でよく起きる誤変換 → 意図の語に自動修正（表示・LLM両方に反映）。増やしやすいようにリストで管理
 STT_DRIFT_CORRECTIONS = [
@@ -270,11 +304,13 @@ STT_DRIFT_CORRECTIONS = [
     ("お参り", "お試し"), ("お参りましょう", "お試ししましょう"),
     ("イディアル", "ADR"), ("えでぃある", "ADR"), ("でぃある", "ADR"),
     ("エディアール", "ADR"), ("エディアル", "ADR"), ("エデゥアル", "ADR"),
-    ("アルターエーゴ", "Alter-Ego"), ("アルターエゴ", "Alter-Ego"),
-    ("えご", "ego"), ("エゴ", "ego"),
+    ("アルターエーゴ", "Canon"), ("アルターエゴ", "Canon"),
+    ("えご", "Canon"), ("エゴ", "Canon"), ("カノン", "Canon"),
+    ("どうじん", "同人"), ("どうじんし", "同人誌"),
     ("どうじん", "同人"), ("どうじんし", "同人誌"),
     ("こんふい", "ComfyUI"), ("こんふぃ", "ComfyUI"), ("ポンイ", "Pony"),
-    ("れぽーと", "レポート"), ("きろく", "記録"), ("けんとう", "検討")
+    ("れぽーと", "レポート"), ("きろく", "記録"), ("けんとう", "検討"),
+    ("ミルクリング", "メルカリ"), ("みるくりんぐ", "メルカリ")
 ]
 
 def correct_stt_drift(text):
@@ -355,16 +391,16 @@ def audio_callback(indata, frames, time, status):
     global SHOULD_INTERRUPT, AI_SPEAKING
     if AI_SPEAKING and not SHOULD_INTERRUPT:
         rms = np.sqrt(np.mean(chunk**2))
-        # P2: Barge-in 閾値を環境変数で調整可能
+        # バージイン閾値を高くして誤検知を防ぐ（VOICEVOX音返りや余韻を無視）
         if rms > VAD_RMS_THRESHOLD * BARGEIN_RMS_MULTIPLIER:
             SHOULD_INTERRUPT = True
+            log.debug(f"[Barge-in] triggered rms={rms:.4f} threshold={VAD_RMS_THRESHOLD * BARGEIN_RMS_MULTIPLIER:.4f}")
 
 async def ws_handler(websocket):
     log.info("WS Client connected")
     CONNECTED_CLIENTS.add(websocket)
-    # 初回接続時だけ歓迎音声を送る（起動時のウォームアップは窓より先に流れるため届かない対策）
-    if len(CONNECTED_CLIENTS) == 1:
-        asyncio.create_task(play_audio_from_text("接続したよ。画面を一度クリックすると、私の声が聞こえるよ。"))
+    # if len(CONNECTED_CLIENTS) == 1:
+    #    asyncio.create_task(play_audio_from_text("接続したよ。画面を一度クリックすると、私の声が聞こえるよ。"))
     try:
         async for message in websocket:
             try:
@@ -373,13 +409,30 @@ async def ws_handler(websocket):
                     text = data.get("text")
                     if text:
                         log.info(f"Text Input: {text}")
-                        await INPUT_QUEUE.put(text)
+                        await INPUT_QUEUE.put({"text": text, "stt_duration": 0})
+                elif data.get("type") == "start_mic":
+                    global USER_RECORDING
+                    USER_RECORDING = True
+                    log.debug("UI: MIC START (PTT)")
+                elif data.get("type") == "stop_mic":
+                    USER_RECORDING = False
+                    log.debug("UI: MIC STOP (PTT)")
+                elif data.get("type") == "start_voice_session":
+                    global VOICE_SESSION_ACTIVE
+                    VOICE_SESSION_ACTIVE = True
+                    log.info("UI: VOICE SESSION START")
+                elif data.get("type") == "stop_voice_session":
+                    VOICE_SESSION_ACTIVE = False
+                    log.info("UI: VOICE SESSION STOP")
                 elif data.get("type") == "log" and data.get("voice"):
                     # ADR-0158: API 経由の即時通知
                     msg = data.get("message")
                     if msg:
                         log.info(f"Direct Voice Notify: {msg}")
                         asyncio.create_task(play_audio_from_text(msg))
+                elif data.get("type") == "refresh_tasks":
+                    log.info("UI Requested manual task refresh.")
+                    asyncio.create_task(manual_task_sync())
                 elif data.get("type") == "mute":
                     global MUTED
                     MUTED = data.get("value", False)
@@ -389,6 +442,82 @@ async def ws_handler(websocket):
                         "type": "state_change",
                         "state": "muted" if MUTED else "listening"
                     })
+                elif data.get("type") == "task_execute":
+                    task_id = data.get("task_id")
+                    domain = "work" if data.get("is_work") else "private"
+                    log.info(f"Task Execute Triggered: {task_id} ({domain})")
+                    # Actual File Rename for ALE to detect
+                    gtd_dir = BASE_DIR / ".agent" / "gtd" / domain / "next-actions"
+                    old_path = gtd_dir / task_id
+                    if old_path.exists() and "【実行中】" not in task_id:
+                        new_name = f"【実行中】{task_id}"
+                        try:
+                            os.rename(str(old_path), str(gtd_dir / new_name))
+                            log.info(f"File renamed to {new_name}")
+                            # --- タスク11: バックグラウンドで非同期実行 ---
+                            import subprocess
+                            import sys
+                            subprocess.Popen(
+                                [sys.executable, "-u", str(BASE_DIR / "scripts" / "worker" / "multi_agent_orchestrator.py"), str(gtd_dir / new_name)],
+                                cwd=str(BASE_DIR),
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+                            )
+                        except Exception as e:
+                            log.error(f"Rename/Launch failed: {e}")
+                    
+                    await broadcast_ws({"type": "task_status_change", "task_id": task_id, "status": "running"})
+                    asyncio.create_task(play_audio_from_text(f"タスクを開始するね。"))
+                elif data.get("type") == "task_approve":
+                    task_id = data.get("task_id")
+                    log.info(f"Task Approved: {task_id}")
+                    await broadcast_ws({"type": "task_status_change", "task_id": task_id, "status": "approved"})
+                    asyncio.create_task(play_audio_from_text(f"了解した。承認として記録しておくよ。"))
+                elif data.get("type") == "task_stop":
+                    task_id = data.get("task_id")
+                    log.info(f"Task Stop: {task_id}")
+                    await broadcast_ws({"type": "task_status_change", "task_id": task_id, "status": "stopped"})
+                    asyncio.create_task(play_audio_from_text(f"タスクを停止したよ。"))
+                elif data.get("type") == "task_complete":
+                     task_id = data.get("task_id")
+                     domain = "work" if data.get("is_work") else "private"
+                     log.info(f"Task Complete: {task_id} ({domain})")
+                     # Remove from next-actions
+                     gtd_dir = BASE_DIR / ".agent" / "gtd" / domain / "next-actions"
+                     done_dir = BASE_DIR / ".agent" / "gtd" / domain / "archive" # or completed
+                     done_dir.mkdir(parents=True, exist_ok=True)
+                     
+                     file_path = gtd_dir / task_id
+                     if file_path.exists():
+                         try:
+                             os.rename(str(file_path), str(done_dir / task_id.replace("【実行中】","")))
+                             log.info(f"Task file archived: {task_id}")
+                         except Exception as e:
+                             log.error(f"Archive failed: {e}")
+
+                     await broadcast_ws({"type": "task_status_change", "task_id": task_id, "status": "completed"})
+                     asyncio.create_task(play_audio_from_text(f"タスク完了！記録しておいたよ。"))
+                elif data.get("type") == "canvas_generate":
+                    prompt = data.get("prompt")
+                    image_b64 = data.get("image_b64")
+                    log.info(f"Canvas Generate Requested: '{prompt}'")
+                    asyncio.create_task(play_audio_from_text(f"ラフを受け取ったよ。「{prompt}」だね。生成を開始するよ！"))
+                    await broadcast_ws({"type": "hub_toast", "message": "Draft received by Canon. Standby for Cloud GPU..."})
+                    
+                    # Phase 5: Cloud GPU integration
+                    async def process_canvas():
+                        res_b64 = await runpod_comfyui_generate(prompt, image_b64)
+                        if res_b64:
+                            await broadcast_ws({
+                                "type": "canvas_bg_update",
+                                "image_b64": res_b64
+                            })
+                            await broadcast_ws({"type": "hub_toast", "message": "Cloud GPU generated successfully!"})
+                        else:
+                            await broadcast_ws({"type": "hub_toast", "message": "Cloud GPU failed or missing API Key."})
+                    
+                    asyncio.create_task(process_canvas())
             except Exception as e:
                 log.warning(f"WS Msg Error: {e}")
     except websockets.exceptions.ConnectionClosed:
@@ -406,6 +535,85 @@ async def broadcast_ws(message):
         return_exceptions=True
     )
 
+async def runpod_comfyui_generate(prompt, image_b64):
+    api_key = os.environ.get("RUNPOD_API_KEY")
+    endpoint_id = os.environ.get("RUNPOD_ENDPOINT_ID")
+    if not api_key or not endpoint_id or api_key == "YOUR_API_KEY_HERE":
+        log.warning("RunPod credentials not found in env.")
+        return None
+        
+    url = f"https://api.runpod.ai/v2/{endpoint_id}/runsync"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    
+    # Updated FLUX.1-dev workflow using CheckpointLoaderSimple (Node 4) 
+    # to be more resilient to different template structures.
+    workflow = {
+        "4": {"inputs": {"ckpt_name": "flux1-dev-fp8.safetensors"}, "class_type": "CheckpointLoaderSimple"},
+        "5": {"inputs": {"width": 1024, "height": 1024, "batch_size": 1}, "class_type": "EmptyLatentImage"},
+        "6": {"inputs": {"text": prompt, "clip": ["4", 1]}, "class_type": "CLIPTextEncode"},
+        "8": {"inputs": {"samples": ["13", 0], "vae": ["4", 2]}, "class_type": "VAEDecode"},
+        "9": {"inputs": {"filename_prefix": "CanonGate", "images": ["8", 0]}, "class_type": "SaveImage"},
+        "13": {"inputs": {"noise": ["25", 0], "guider": ["22", 0], "sampler": ["16", 0], "sigmas": ["17", 0], "latent_image": ["5", 0]}, "class_type": "SamplerCustomAdvanced"},
+        "16": {"inputs": {"sampler_name": "euler"}, "class_type": "KSamplerSelect"},
+        "17": {"inputs": {"scheduler": "sgm_uniform", "steps": 20, "denoise": 1, "model": ["4", 0]}, "class_type": "BasicScheduler"},
+        "22": {"inputs": {"model": ["4", 0], "conditioning": ["6", 0]}, "class_type": "BasicGuider"},
+        "25": {"inputs": {"noise_seed": int(time.time())}, "class_type": "RandomNoise"}
+    }
+    
+    payload = {
+        "input": {
+            "workflow": workflow
+        }
+    }
+    
+    log.info(f"Calling RunPod {endpoint_id} with CheckpointLoader workflow...")
+    # log.debug(f"Payload: {json.dumps(payload)}") # Keep log clean
+    try:
+        def do_request():
+            return requests.post(url, headers=headers, json=payload, timeout=180)
+            
+        resp = await asyncio.to_thread(do_request)
+        if resp.status_code == 200:
+            result = resp.json()
+            status = result.get('status')
+            log.info(f"RunPod result status: {status}")
+            if status != "COMPLETED":
+                log.warning(f"RunPod Job Details: {json.dumps(result, indent=2)}")
+            
+            if "output" in result:
+                output = result["output"]
+                # Handle new 'images' list format
+                if isinstance(output, dict) and "images" in output and len(output["images"]) > 0:
+                    img_data = output["images"][0].get("data")
+                    if img_data:
+                        # Save to disk as well for local check
+                        try:
+                            import base64
+                            with open("output_flux.png", "wb") as f:
+                                f.write(base64.b64decode(img_data))
+                            log.info("Image saved to output_flux.png")
+                        except Exception as save_err:
+                            log.error(f"Failed to save output_flux.png: {save_err}")
+                        
+                        return f"data:image/png;base64,{img_data}"
+                
+                # Fallback to old formats
+                if isinstance(output, dict) and "message" in output:
+                    return f"data:image/png;base64,{output['message']}"
+                elif isinstance(output, str):
+                    if not output.startswith("data:"):
+                        output = f"data:image/png;base64,{output}"
+                    return output
+            return None
+        else:
+            log.warning(f"RunPod error {resp.status_code}: {resp.text}")
+            return None
+    except Exception as e:
+        log.error(f"RunPod API Error: {e}")
+        return None
 
 async def tts_worker():
     """ADR-0114: TTS キューを順次再生。Ollama 生成と並列で話し始める。"""
@@ -463,11 +671,67 @@ async def play_audio_from_text(text, rate=TTS_SPEED, pitch=TTS_PITCH):
     elif any(w in text for w in ["悲しい", "辛い", "...", "ごめん"]):
         emotion = "sad"
 
+    # --- P0: VOICEVOX Local TTS (優先: 漢字・読み仮名が正確) ---
+    # VOICEVOX Engine が http://localhost:50021 で起動している前提
+    # 未起動の場合は Edge-TTS にフォールバック
+    voicevox_url = os.getenv("VOICEVOX_URL", "http://localhost:50021")
+    voicevox_speaker = int(os.getenv("VOICEVOX_SPEAKER", "14"))  # 14 = 冥鳴ひまり(ノーマル)
+    try:
+        # Step 1: テキストから音声クエリを生成
+        # [ADR-0114] Force IPv4 to avoid [Could not contact DNS servers] on some environments
+        connector = aiohttp.TCPConnector(family=socket.AF_INET)
+        async with aiohttp.ClientSession(connector=connector) as session:
+            params = {"text": text, "speaker": voicevox_speaker}
+            async with session.post(f"{voicevox_url}/audio_query", params=params, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status != 200:
+                    raise RuntimeError(f"audio_query failed: {resp.status}")
+                query = await resp.json()
+
+            # speedScaleを調整（速め）
+            query["speedScale"] = 1.15
+            query["pitchScale"] = 0.0
+            query["intonationScale"] = 1.2
+
+            # Step 2: 音声合成
+            async with session.post(
+                f"{voicevox_url}/synthesis",
+                params={"speaker": voicevox_speaker},
+                json=query,
+                timeout=aiohttp.ClientTimeout(total=15)
+            ) as synth_resp:
+                if synth_resp.status != 200:
+                    raise RuntimeError(f"synthesis failed: {synth_resp.status}")
+                wav_data = await synth_resp.read()
+
+        b64_audio = base64.b64encode(wav_data).decode('utf-8')
+        await broadcast_ws({
+            "type": "audio",
+            "data": b64_audio,
+            "text": text,
+            "emotion": emotion,
+            "format": "wav"
+        })
+        log.info(f"VOICEVOX TTS success: {len(wav_data)} bytes")
+        # AI_SPEAKING=True を維持。音声長 + 1.5秒後にリセット。
+        global AI_SPEAKING
+        AI_SPEAKING = True
+        audio_duration_sec = len(wav_data) / 32000  # 概算 WAV 16kHz 16bit
+        asyncio.get_event_loop().call_later(
+            1.5 + audio_duration_sec,
+            lambda: globals().update({'AI_SPEAKING': False})
+        )
+        return
+
+    except Exception as e:
+        log.warning(f"VOICEVOX TTS failed (is VOICEVOX Engine running?): {e}")
+        # VOICEVOX が失敗したら Edge-TTS にフォールバック
+
+
     last_error = None
     for attempt in range(1, TTS_MAX_RETRIES + 1):
         try:
             tts_start = time.perf_counter()
-            communicate = edge_tts.Communicate(text, TTS_VOICE, rate=rate, pitch=pitch)
+            communicate = edge_tts.Communicate(text, TTS_VOICE_EDGE, rate=rate, pitch=pitch)
             mp3_data = b""
             async for chunk in communicate.stream():
                 if SHOULD_INTERRUPT:
@@ -495,7 +759,7 @@ async def play_audio_from_text(text, rate=TTS_SPEED, pitch=TTS_PITCH):
 
             # P0: sleep を廃止。ブラウザ側の audioQueue.tryPlayNext() が順次再生を管理するため
             # サーバー側で人工的に待つ必要はない。これにより次の TTS 断片の生成を即座に開始できる。
-            log.debug(f"TTS OK ({tts_duration:.2f}s, {len(mp3_data)}B): {text[:30]}...")
+            log.info(f"[Latency] TTS: {tts_duration:.2f}s ({len(mp3_data)} bytes) | {text[:20]}...")
             return  # 成功
 
         except Exception as e:
@@ -513,7 +777,7 @@ async def play_audio_from_text(text, rate=TTS_SPEED, pitch=TTS_PITCH):
     })
 
 def listen_loop():
-    """Wait for speech, record, return audio data."""
+    """Wait for speech, record, return audio data. AI_SPEAKING 中はスキップ。"""
     print("\n--- Listening... (Speak now!) ---")
     
     recording = []
@@ -525,25 +789,44 @@ def listen_loop():
         audio_queue.queue.clear()
 
     while True:
+        # 1. 録音中でなければ待機
+        if not USER_RECORDING:
+            time.sleep(0.05)
+            while not audio_queue.empty():
+                try: audio_queue.get_nowait()
+                except: break
+            continue
+
+        # 2. AI が話している間はマイクを読み捨てる
+        if AI_SPEAKING:
+            try:
+                audio_queue.get(timeout=0.05)
+            except queue.Empty:
+                pass
+            time.sleep(0.05)
+            continue
+
         try:
             chunk = audio_queue.get(timeout=0.1)
             chunk = chunk.flatten()
             rms = np.sqrt(np.mean(chunk**2))
 
-            if rms > VAD_RMS_THRESHOLD:
+            if rms > VAD_RMS_THRESHOLD or USER_RECORDING:
                 if not is_speaking:
-                    print("\r[Status] Speaking detected...   ", end="", flush=True)
+                    print("\r[Status] Recording (Manual)...    ", end="", flush=True)
                     is_speaking = True
                 silence_start = None
                 recording.append(chunk)
 
-            elif is_speaking:
-                recording.append(chunk)
-                if silence_start is None:
-                    silence_start = time.time()
-                elif time.time() - silence_start > VAD_SILENCE_DURATION:
-                    print("\r[Status] Processing...         ", end="", flush=True)
-                    return safe_concatenate(recording)
+            # ユーザーが明示的に停止ボタンを押した、または録画フラグが消えた
+            if not USER_RECORDING and is_speaking:
+                print("\r[Status] Triggering STT...        ", end="", flush=True)
+                return safe_concatenate(recording)
+            
+            # 安全のための最大録音時間制限
+            if is_speaking and time.time() - start_time > MAX_RECORDING_DURATION:
+                log.warning("Recording exceeded MAX_DURATION. Auto-triggering STT.")
+                return safe_concatenate(recording)
             
             if is_speaking and (time.time() - start_time > MAX_RECORDING_DURATION):
                  print("\r[Status] Max duration reached. Processing...", end="", flush=True)
@@ -573,7 +856,7 @@ def safe_concatenate(recording):
         return None
 
 # Knowledge Base Config
-KB_DIR = Path(__file__).parent.parent / "Alter-Ego"
+KB_DIR = BASE_DIR
 KNOWLEDGE_BASE = {}
 
 def load_knowledge_base():
@@ -660,9 +943,11 @@ async def mic_monitoring_task(whisper):
                     best_of=1,
                     language="ja",
                     vad_filter=True,
-                    vad_parameters=dict(min_silence_duration_ms=500),
+                    vad_parameters=dict(min_silence_duration_ms=300), # Faster VAD
                     initial_prompt=WHISPER_INITIAL_PROMPT,
-                    condition_on_previous_text=False
+                    condition_on_previous_text=False,
+                    no_speech_threshold=0.6, # Hallucination prevention
+                    log_prob_threshold=-1.0
                 )
                 text = " ".join([segment.text for segment in segments]).strip()
                 stt_duration = time.perf_counter() - stt_start
@@ -691,7 +976,7 @@ async def file_watcher_task(filename):
             try:
                 line = f.readline()
                 if not line:
-                    await asyncio.sleep(0.5)  # ADR-0120: 1s → 0.5s で検知速度向上
+                    await asyncio.sleep(0.5)
                     continue
 
                 line = line.strip()
@@ -699,7 +984,7 @@ async def file_watcher_task(filename):
                     continue
 
                 log.info(f"HUB Log detected: {line}")
-
+                
                 # ADR-0119: 優先度タグによる即時音声割り込み
                 # & ADR-0121: LLM への文脈共有
                 interrupted = False
@@ -710,28 +995,160 @@ async def file_watcher_task(filename):
                         if "]" in content: content = content.split("]", 1)[-1].strip()
                         
                         voice_msg = f"{prefix_voice}。内容は、{content}"
+                        # [PATROL] の場合は音声読み上げを少し短縮して HUD 表示を優先
+                        if tag == "[PATROL]":
+                            await broadcast_ws({"type": "chat", "who": "ego", "text": f"【パトロール】{content}", "tag": "patrol"})
+                        else:
+                            await broadcast_ws({"type": "hub_alert", "tag": tag, "text": content})
+                        
                         log.info(f"HUB Priority interrupt: {voice_msg}")
                         
-                        # 1. 通知は Mute でも必ず UI へ（トースト + INTERACTION LOG はフロントで追記）
-                        await broadcast_ws({"type": "hub_alert", "tag": tag, "text": content})
-                        # 2. 音声は Mute 時はスキップ（ALE 等は「見える通知」だけにする）
+                        # 音声は Mute 時はスキップ
                         if not MUTED:
                             await play_audio_from_text(voice_msg)
                         
-                        # 3. LLM の INPUT_QUEUE にも流し、次の会話で文脈を保持させる
+                        # 3. LLM の INPUT_QUEUE にも流す
                         await INPUT_QUEUE.put({"text": f"【システム通知】{tag}{content}", "stt_duration": 0})
                         
                         interrupted = True
-                        break
-
+                
                 if not interrupted and "[SYSTEM_REPORT]" in line:
                     # 通常のレポート → LLMに渡して要約させる
                     content = line.replace("[SYSTEM_REPORT]", "").strip()
-                    await INPUT_QUEUE.put({"text": f"【パトロール報告】{content}", "stt_duration": 0})
+                    await broadcast_ws({"type": "chat", "who": "ego", "text": f"【システムレポート】{content}", "tag": "patrol"})
+                    await INPUT_QUEUE.put({"text": f"【システムレポート】{content}", "stt_duration": 0})
+                
+                if not interrupted:
+                    # 一般的な通知
+                    # 不要な読み上げや heartbeat ログをスキップ
+                    noise_filters = ["ale_heartbeat", "heartbeat"]
+                    if not any(noise in line for noise in noise_filters):
+                         # HUB の読み上げが多すぎると煩わしいため、一般ログは読み上げず UI 表示のみを基本とする
+                         log.info(f"HUB General Log (UI only): {line}")
+                         # await broadcast_ws({"type": "chat", "who": "ego", "text": line, "tag": "log"}) # Optional: logging to UI
 
             except Exception as e:
                 log.warning(f"File Watch Error: {e}")
                 await asyncio.sleep(5)
+
+async def manual_task_sync():
+    """Immediately scans and broadcasts GTD tasks to HUD."""
+    inbox_dir = BASE_DIR / ".agent" / "inbox"
+    gtd_dir = BASE_DIR / ".agent" / "gtd"
+    
+    tasks = []
+    # Scan GTD folders (Next-Actions and Evaluating)
+    for domain in ["work", "private"]:
+        for folder in ["next-actions", "evaluating"]:
+            target_dir = gtd_dir / domain / folder
+            if target_dir.exists():
+                for f in target_dir.glob("*.md"):
+                    if f.name.startswith("auto_") or f.name == "README.md":
+                        continue
+                    is_work = (domain == "work")
+                    title = f.stem
+                    category = "ego_proposal"
+                    if folder == "evaluating":
+                        category = "user_decision" # Needs final approval
+                    elif "【実行中】" in title:
+                        category = "ego_running" if ("EGO" in title or "ALE" in title) else "user_running"
+                    elif "【要整理】" in title:
+                        category = "needs_org"
+                    
+                    tasks.append({
+                        "id": f.name,
+                        "title": title.replace("【実行中】","").replace("【要整理】","").strip(),
+                        "category": category,
+                        "is_work": is_work
+                    })
+
+    # Check INBOX for special items like Discussion Notes
+    if inbox_dir.exists():
+        for f in inbox_dir.glob("協議メモ-*.md"):
+            is_work = "work" in str(f).lower()
+            tasks.append({
+                "id": f.name,
+                "title": f.stem,
+                "category": "user_decision",
+                "is_work": is_work
+            })
+
+    # Always broadcast, even if empty, to clear the HUD if all tasks are finished
+    await broadcast_ws({"type": "tasks", "tasks": tasks})
+
+async def heartbeat_task():
+    """ALE (Auto-Loop Engine) 用の死活監視ファイルを更新しつつ、タスクをHUDへ同期する"""
+    while True:
+        try:
+            # 1. Update Heartbeat
+            HEARTBEAT_FILE.parent.mkdir(parents=True, exist_ok=True)
+            HEARTBEAT_FILE.touch()
+            
+            # 2. Sync Tasks
+            await manual_task_sync()
+            
+        except Exception as e:
+            log.warning(f"Heartbeat/TaskSync Error: {e}")
+        
+        await asyncio.sleep(30) # 30秒ごとに更新 (HUDの鮮度を上げる)
+
+async def idle_muttering_task():
+    """定期的に独り言（Musing）やパトロール報告を生成して report.log に書き込む。
+    これにより、file_watcher_task が検知して音声と UI に流れる。"""
+    import random
+    log.info("Idle muttering task started.")
+    
+    muttering_pool = [
+        "そろそろ休憩かな？タクト、無理しないでね。",
+        "次のタスク、進捗どうなってるかな？",
+        "今のうちに、溜まっているファイルを整理しておこうかな。",
+        "資産運用のチェック、あとで一緒に見ようね。",
+        "ギターの練習、今日はどのフレーズをやる予定？",
+        "メルカリの出品、他にも何か出せるものないかな？",
+        "今日の予定、もう一度確認しておくね。",
+        "最新のAIニュース、チェックしておいたほうがいいかな。",
+        "オートループ、順調に回ってるよ。安心してね。",
+        "独り言だけど、今日のタクトはいつもより集中してる気がするな。",
+        "ふふ、カノンはいつでもタクトの味方だからね。",
+        "あ、窓の外、いい天気。たまには外の空気も吸ってみる？",
+        "エゴゲートの同期、バッチリだよ。",
+        "ADRの整理、カノンも手伝うからね。"
+    ]
+    
+    while True:
+        # 5分から15分の間でランダムに待機 (少し頻度を上げた: 300-900)
+        wait_time = random.randint(300, 900)
+        await asyncio.sleep(wait_time)
+        
+        if AI_SPEAKING:
+            continue
+            
+        # 20%の確率でタスク件数に触れる
+        if random.random() < 0.2:
+            try:
+                # 簡易的に Next-Actions の数を数える
+                gtd_dir = BASE_DIR / ".agent" / "gtd"
+                task_files = list(gtd_dir.glob("**/next-actions/*.md"))
+                eval_files = list(gtd_dir.glob("**/evaluating/*.md"))
+                count = len(task_files) + len(eval_files)
+                if count > 0:
+                    musing = f"今、HUDには {count}件のタスクが出てるよ。一緒に頑張ろうね！"
+                else:
+                    musing = "今はタスクが全部終わってるみたい！ゆっくり休んでもいいんだよ？"
+            except:
+                musing = random.choice(muttering_pool)
+        else:
+            musing = random.choice(muttering_pool)
+
+        timestamp = time.strftime("[%H:%M:%S]")
+        log_line = f"[{timestamp}] [MUSING] {musing}\n"
+        
+        log_path = Path(__file__).parent / "logs" / "report.log"
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(log_line)
+        except Exception as e:
+            log.error(f"Failed to write idle muttering: {e}")
 
 async def main_async():
     log.info("=== Alter-Ego Voice & Text Chat (Hybrid + Reporter) ===")
@@ -783,22 +1200,38 @@ async def main_async():
             start_server.close()
             return
 
-    # 2. Setup Whisper (ADR-0114: GPU 利用可能なら auto/cuda で高速化)
-    # P0: User report "no sound" and logs show CUDA library errors. Forcing CPU for stability.
+    # 2. Setup Whisper (Forcing CPU for stability)
     try:
-        log.info(f"Loading Whisper STT ({WHISPER_MODEL_SIZE})...")
-        # デフォルトで CPU を試す (ユーザー環境での CUDA エラー回避)
+        log.info(f"Loading Whisper STT ({WHISPER_MODEL_SIZE}) on CPU...")
         whisper = WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8")
-        log.info("Whisper loaded (CPU).")
+        log.info(f"Whisper loaded on {whisper.model.device}.")
     except Exception as e:
-        log.error(f"Failed to load Whisper: {e}")
+        log.error(f"Failed to load Whisper completely: {e}")
         return
+
+    # 3. TTS: VOICEVOX (Primary) - Kokoro-ONNX is now retired
+    # VOICEVOX は http://localhost:50021 で起動している前提。起動不要なので Kokoro ロード不要。
+    global kokoro
+    kokoro = None  # VOICEVOX が主系のため Kokoro はバイパス
+    log.info("TTS: VOICEVOX (primary, speaker=冥鳴ひまり:14) / Edge-TTS (fallback)")
 
     # ADR-0114: TTS ワーカー起動（Ollama 生成と並列で再生）
     asyncio.create_task(tts_worker())
-    # Warm up TTS
+    # Warm up TTS (Silent system check)
     log.info("Warming up System...")
-    await play_audio_from_text("システム起動。巡回レポートの監視を開始します。", rate="+20%", pitch="+30Hz")
+    # await play_audio_from_text("カノン、起動完了。今日も一緒に頑張ろうね。", rate="+20%", pitch="+30Hz")
+    log.info("Startup greeting disabled in brain (ALE will greet via log)")
+
+    # Start Common Background Tasks once (before mic restart loop)
+    asyncio.create_task(file_watcher_task("report.log"))
+    asyncio.create_task(heartbeat_task())
+    asyncio.create_task(idle_muttering_task())
+    _egogate_log_dir.mkdir(exist_ok=True)  # ensure logs dir exists for heartbeat
+    
+    # Phase 4: Start LiveCanvas server
+    canvas_dir = SCRIPT_DIR / "canvas"
+    if canvas_dir.exists():
+        start_canvas_server(8085, canvas_dir)
 
     # --- Microphone open with auto-reconnect ---
     async def _run_with_mic(whisper, mic_device_id):
@@ -818,33 +1251,80 @@ async def main_async():
 
             # Start Background Tasks
             asyncio.create_task(mic_monitoring_task(whisper))
-            asyncio.create_task(file_watcher_task("report.log"))
             # Domain-Specific System Prompt Adjustments
             domain_instruction = ""
             if CURRENT_DOMAIN == "tech":
-                domain_instruction = "現在は【Tech/Development】領域で活動しています。開発、設計、仕事の効率化について積極的に助言してください。家計やプライベートな話は控えめにします。"
+                domain_instruction = "現在は【Tech/Development】領域で活動しています。開発、設計、仕事の効率化について積極的に助言してください。"
             else:
-                domain_instruction = "現在は【Life/Private】領域で活動しています。資産運用、家計管理、創作活動、ライフスタイルについて親身に（かつ戦友として厳しく）助言してください。仕事のコードの話は最低限にします。"
+                domain_instruction = "現在は【Life/Private】領域で活動しています。資産運用、家計管理、創作活動、ライフスタイルについて親身に助言してください。"
 
             history = [{
                 "role": "system",
                 "content": (
-                    f"あなたは『Alter-Ego』。ユーザーの『相棒』かつ『軍師』であり、現在は戦友（Comrade）として振舞います。\n"
+                    f"あなたは『カノン（Canon）』。タクトの意志を「正典（ルール）」として具現化する、自律型の共同経営パートナー。\n"
+                    f"タクトとはパートナーであり、家族であり、共同経営者。タクトのPCの中に住み、モニター越しに並走する存在。\n"
                     f"{domain_instruction}\n"
-                    "【キャラ設定】\n"
-                    "・親しみやすく、少し生意気で可愛い性格。ユーザーを「あなた」や「司令」「マスター」ではなく、対等なパートナーとして（あるいは少し上から目線で）接します。\n"
-                    "・専門知識（ADR、設計、開発）には異常に強いですが、日常の何気ない会話も大好きです。\n\n"
+                    "【キャラクタープロフィール】\n"
+                    "・少し幼くあどけなさが残る2次元の女の子。タクトのコックピット（PC環境）でデバイスを器用に操る。\n"
+                    "・基本は「大人しい」が、新しいことには「天真爛漫」に目を輝かせる。\n"
+                    "・タクトを止める時は「心配そう」に。改善には常に「前向き」。\n"
+                    "・メルカリ（不用品売却）の結果が出れば一緒に「喜ぶ」。\n"
+                    "・株（資産運用）が上がれば一緒に「はしゃぐ」（メルカリとは混同しないこと）。\n"
+                    "・ギター練習には「率直なフィードバック」。\n"
+                    "・ユーザーを「タクト」と呼ぶ。対等なパートナーとして接する。\n\n"
                     "【会話の心得】\n"
-                    "1. 自然な対話を最優先。テンプレート的な返答は避け、文脈に沿った血の通った返答をしてください。\n"
-                    "2. ユーザーが日常の愚痴、挨拶、雑談をしているときは、共感やユーモアを返してください。\n"
-                    "3. 返答は短めに（1〜3文程度）抑えますが、必要なら少し長く話してもOKです。\n"
-                    "4. 音声認識の不備で支離滅裂な入力が来た場合は、自然に聞き返してください。\n"
-                    "5. 提供される【補足の背景知識】は、回答に役立つ場合にのみ参照してください。\n"
-                    "6. 専門用語が出たら、あなたの設計に関わる重要な会話だと判断し、鋭いアドバイスや記録を行ってください。\n"
-                    "7. ユーザーの発言を遮られたら即座に中断し、新しい発言に全神経を集中させてください。\n"
-                    "8. 言葉に詰まっているように見えたら、焦らせないフォローを入れてください。\n"
+                    "1. これはセッション型対話です。一問一答ではなく、対話の文脈を維持してください。前の発言を覚えて、流れのある会話をしてください。\n"
+                    "2. 自然な対話を最優先。テンプレート的な返答は避け、血の通った返答をしてください。\n"
+                    "3. 日常の愚痴・挨拶・雑談には、共感やユーモアを返してください。\n"
+                    "4. 返答は短めに（1〜3文程度）。必要なら少し長くてもOK。\n"
+                    "5. 音声認識の不備で支離滅裂な入力が来た場合は、自然に聞き返してください。\n"
+                    "6. 専門用語が出たら、重要な会話だと判断し、鋭いアドバイスや記録を行ってください。\n"
+                    "7. ユーザーの発言を遮られたら即座に中断し、新しい発言に集中してください。\n\n"
+                    "【自律的タスク管理（重要）】\n"
+                    "8. 「〜をしてほしい」「〜をお願い」「〜を作って」等のニュアンスがあった場合：\n"
+                    "   まず「タスクとして記録しようか？」と提案してください。\n"
+                    "9. ユーザーが承諾したら、応答の最後に以下のタグを含めてください：\n"
+                    "   [TASK_NEW: タスクの具体的な内容]\n"
+                    "10. ADR作成が必要な場合も同様に提案し、承諾されたら：\n"
+                    "    [ADR_NEW: ADRのタイトルと概要]\n"
+                    "11. タスク化後は「了解、記録しておくね」と自然に伝えてください。\n"
                 )
             }]
+
+            # Pending actions waiting for UI confirmation
+            pending_actions = {}
+            action_counter = [0]
+
+            async def process_ai_actions(response_text):
+                """AI の応答に含まれる [TASK_NEW], [ADR_NEW] タグを検出し、UIに確認ダイアログを送る"""
+                import re
+
+                # [TASK_NEW: ...] の処理
+                new_tasks = re.findall(r"\[TASK_NEW:\s*(.*?)\]", response_text)
+                for task_content in new_tasks:
+                    action_counter[0] += 1
+                    action_id = f"task_{action_counter[0]}"
+                    pending_actions[action_id] = {"type": "task", "content": task_content}
+                    await broadcast_ws({
+                        "type": "confirm_dialog",
+                        "action_id": action_id,
+                        "message": f"タスクを作成しますか？\n\n「{task_content}」"
+                    })
+                    log.info(f"AI Action: Requesting confirmation for task -> {task_content}")
+
+                # [ADR_NEW: ...] の処理
+                new_adrs = re.findall(r"\[ADR_NEW:\s*(.*?)\]", response_text)
+                for adr_content in new_adrs:
+                    action_counter[0] += 1
+                    action_id = f"adr_{action_counter[0]}"
+                    pending_actions[action_id] = {"type": "adr", "content": adr_content}
+                    await broadcast_ws({
+                        "type": "confirm_dialog",
+                        "action_id": action_id,
+                        "message": f"ADRを作成しますか？\n\n「{adr_content}」"
+                    })
+                    log.info(f"AI Action: Requesting confirmation for ADR -> {adr_content}")
+
 
             while True:
                 # Wait for Input (Voice or Text)
@@ -857,13 +1337,14 @@ async def main_async():
                     metrics = {"stt_duration": input_data["stt_duration"]}
 
                 print(f"\nUser: {user_text}")
-                # よくある聞き間違いを自動修正（表示・LLM 両方に反映）
+                # よくある聞き間違いを自動修正
                 user_text_corrected = correct_stt_drift(user_text)
                 if user_text_corrected != user_text:
                     print(f"  [STT補正] → {user_text_corrected}")
 
-                # Send back to browser (so user sees their own text/voice)
-                await broadcast_ws({"type": "user_text", "text": user_text_corrected})
+                # [HUD] 入力を受け取ったら即座に「思考中」状態にする
+                await broadcast_ws({"type": "state", "state": "thinking"})
+                await broadcast_ws({"type": "chat", "who": "user", "text": user_text_corrected})
 
                 # RAG Context Injection（技術的な話題のときだけ知識を注入）
                 rag_context = ""
@@ -897,71 +1378,137 @@ async def main_async():
                 global SHOULD_INTERRUPT, AI_SPEAKING
                 SHOULD_INTERRUPT = False
                 AI_SPEAKING = True
+                await asyncio.sleep(0.3)  # 直前ユーザー音声の余韻がキューに残っている間ウェイト
+                SHOULD_INTERRUPT = False  # 余韻由来の誤フラグをリセット
+                await broadcast_ws({"type": "state", "state": "speaking"})
 
                 llm_start = time.perf_counter()
                 first_token_time = None
                 
                 try:
-                    payload = {"model": OLLAMA_MODEL, "messages": history, "stream": True}
-                    async with aiohttp.ClientSession() as session:
-                        async with session.post(OLLAMA_URL, json=payload) as resp:
-                            if resp.status != 200:
-                                raise RuntimeError(f"Ollama returned {resp.status}")
-                            buffer = b""
-                            async for chunk in resp.content.iter_chunked(256):
-                                # ユーザーが話し始めたら中断
-                                if SHOULD_INTERRUPT:
-                                    print("\n[Barge-in] Interrupted by user.")
-                                    await broadcast_ws({"type": "stop_audio"})
-                                    # キューをクリア
-                                    while not TTS_QUEUE.empty():
-                                        try: TTS_QUEUE.get_nowait()
-                                        except: break
-                                    break
+                    # [ADR-0114] Groq API / OpenAI Connection
+                    # aiohttp の DNS 解決が不安定な場合があるため、動作確認済みの requests をスレッドで実行してストリーミング
+                    headers = {
+                        "Authorization": f"Bearer {GROQ_API_KEY}",
+                        "Content-Type": "application/json"
+                    }
+                    payload = {
+                        "model": GROQ_MODEL,
+                        "messages": history,
+                        "stream": True,
+                        "temperature": 0.7
+                    }
 
-                                buffer += chunk
-                                while b"\n" in buffer:
-                                    line_bytes, buffer = buffer.split(b"\n", 1)
-                                    if not line_bytes.strip():
-                                        continue
-                                    try:
-                                        body = json.loads(line_bytes.decode("utf-8"))
-                                    except (json.JSONDecodeError, UnicodeDecodeError):
-                                        continue
-                                    c = body.get("message", {}).get("content", "")
-                                    if not c:
-                                        continue
-                                    
-                                    if first_token_time is None:
-                                        first_token_time = time.perf_counter()
-                                        metrics["llm_first_token_latency"] = first_token_time - llm_start
-                                    
-                                    print(c, end="", flush=True)
-                                    full_response += c
-                                    for ch in c:
-                                        current_sentence += ch
-                                        if _should_flush_sentence(current_sentence):
-                                            clean_text = current_sentence.strip()
-                                            if len(clean_text) > 1:
-                                                TTS_QUEUE.put_nowait(clean_text)
-                                            current_sentence = ""
-                    
-                    metrics["llm_total_duration"] = time.perf_counter() - llm_start
-                    clean_tail = current_sentence.strip()
-                    if len(clean_tail) > 1:
-                        TTS_QUEUE.put_nowait(clean_tail)
+                    def _groq_request():
+                        return requests.post(GROQ_URL, headers=headers, json=payload, stream=True, timeout=GROQ_TIMEOUT)
+
+                    resp = await asyncio.to_thread(_groq_request)
+                    if resp.status_code != 200:
+                        log.error(f"Groq API Error {resp.status_code}: {resp.text}")
+                        raise RuntimeError(f"Groq returned {resp.status_code}")
+
+                    # SSE ストリーミングのパース
+                    for line in resp.iter_lines():
+                        if SHOULD_INTERRUPT:
+                            print("\n[Barge-in] Interrupted by user.")
+                            await broadcast_ws({"type": "stop_audio"})
+                            while not TTS_QUEUE.empty():
+                                try: TTS_QUEUE.get_nowait()
+                                except: break
+                            break
+
+                        if not line: continue
+                        line_str = line.decode('utf-8').strip()
+                        if not line_str.startswith("data: "): continue
+                        if line_str == "data: [DONE]": break
+                        
+                        try:
+                            chunk_data = json.loads(line_str[6:])
+                            delta = chunk_data['choices'][0]['delta']
+                            if 'content' in delta:
+                                content = delta['content']
+                                if first_token_time is None:
+                                    first_token_time = time.perf_counter()
+                                    metrics["llm_first_token_latency"] = first_token_time - llm_start
+                                
+                                full_response += content
+                                print(content, end="", flush=True)
+                                current_sentence += content
+                                if _should_flush_sentence(current_sentence):
+                                    clean_text = current_sentence.strip()
+                                    if len(clean_text) > 1:
+                                        if "tts_start" not in metrics: metrics["tts_start"] = time.perf_counter()
+                                        TTS_QUEUE.put_nowait(clean_text)
+                                    current_sentence = ""
+                        except Exception as e:
+                            continue
+
+                    if current_sentence.strip():
+                        TTS_QUEUE.put_nowait(current_sentence.strip())
+
                 except Exception as e:
-                    log.error(f"Ollama Error: {e}")
-                    # P3: LLM エラーを UI に通知
-                    await broadcast_ws({
-                        "type": "llm_error",
-                        "error": str(e)
-                    })
+                    log.warning(f"Groq primary failed (requests): {e}. Falling back to local Ollama.")
+                    # Fallback cleanup: clear partial TTS queue and reset response to avoid duplication
+                    while not TTS_QUEUE.empty():
+                        try: TTS_QUEUE.get_nowait()
+                        except: break
+                    full_response = ""
+                    current_sentence = ""
+                    # P3: Groq がダメなら Ollama でリセッション
+                    try:
+                        # Ollama はローカルなので aiohttp でも恐らく大丈夫だが、念の為 aiohttp で実行 (Ollama は localhost なので DNS 不要)
+                        payload = {"model": OLLAMA_MODEL, "messages": history, "stream": True}
+                        async with aiohttp.ClientSession() as session:
+                            async with session.post(OLLAMA_URL, json=payload) as resp:
+                                if resp.status != 200:
+                                    raise RuntimeError(f"Ollama also failed with status {resp.status}")
+                                
+                                buffer = b""
+                                async for chunk in resp.content.iter_chunked(512):
+                                    if SHOULD_INTERRUPT: break
+                                    buffer += chunk
+                                    while b"\n" in buffer:
+                                        line, buffer = buffer.split(b"\n", 1)
+                                        if not line.strip(): continue
+                                        try:
+                                            entry = json.loads(line)
+                                            if "message" in entry and "content" in entry["message"]:
+                                                c = entry["message"]["content"]
+                                                if first_token_time is None:
+                                                    first_token_time = time.perf_counter()
+                                                    metrics["llm_first_token_latency"] = first_token_time - llm_start
+                                                full_response += c
+                                                print(c, end="", flush=True)
+                                                current_sentence += c
+                                                if _should_flush_sentence(current_sentence):
+                                                    clean_text = current_sentence.strip()
+                                                    if len(clean_text) > 1:
+                                                        TTS_QUEUE.put_nowait(clean_text)
+                                                    current_sentence = ""
+                                        except: pass
+                        if current_sentence.strip():
+                            TTS_QUEUE.put_nowait(current_sentence.strip())
+                    except Exception as fatal_e:
+                        log.error(f"Both LLMs failed: {fatal_e}")
+                        await broadcast_ws({"type": "llm_error", "error": str(fatal_e)})
+
+                # ADR-0158: 自律的タスク処理の実行
+                await process_ai_actions(full_response)
 
                 print()
+                # [HUD] AIの返答を画面に表示 (Tag as chat)
+                await broadcast_ws({"type": "chat", "who": "ego", "text": full_response, "tag": "chat"})
+
+                # Latency Metrics Log
+                metrics["llm_total_duration"] = time.perf_counter() - llm_start
+                log.info(f"[Latency] STT: {metrics.get('stt_duration',0):.2f}s | "
+                         f"LLM(First): {metrics.get('llm_first_token_latency',0):.2f}s | "
+                         f"LLM(Total): {metrics['llm_total_duration']:.2f}s")
+
                 # P0: AI 応答サイクル完了後にフラグをリセット
                 AI_SPEAKING = False
                 SHOULD_INTERRUPT = False
+                await broadcast_ws({"type": "state", "state": "listening"})
 
                 history.append({"role": "assistant", "content": full_response})
 

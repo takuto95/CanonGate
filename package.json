@@ -1,14 +1,14 @@
 {
-  "name": "alter-ego-assistant",
-  "version": "1.0.0",
-  "description": "Desktop AI Avatar Assistant",
+  "name": "canon-gate",
+  "version": "2.0.0",
+  "description": "CanonGate - AI Partner Desktop HUD",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "simple-mode": "npm start --prefix simple-mode-desktop"
   },
   "keywords": [],
-  "author": "Alter-Ego Team",
+  "author": "Canon Team",
   "license": "ISC",
   "devDependencies": {
     "electron": "^28.0.0"

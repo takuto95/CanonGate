@@ -1,0 +1,156 @@
+:root {
+    --primary: #00ddee;
+    --accent: #ff00ff;
+    --bg-dark: #0a0a14;
+    --glass-bg: rgba(10, 10, 20, 0.7);
+    --glass-border: rgba(0, 221, 238, 0.3);
+}
+
+body, html {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background-color: var(--bg-dark);
+    font-family: 'Outfit', sans-serif;
+    overflow: hidden;
+    touch-action: none; /* Prevent scrolling on mobile/tablet */
+}
+
+#canvas-container {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+}
+
+canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+
+#bg-canvas {
+    z-index: 1; /* Below drawing layer */
+    background: radial-gradient(circle at center, #1a1a2e 0%, #000000 100%);
+}
+
+#draw-canvas {
+    z-index: 2; /* Drawing layer on top */
+}
+
+#ui-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none; /* Let clicks pass through */
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 15px;
+    box-sizing: border-box;
+}
+
+#status {
+    position: absolute;
+    top: 15px;
+    right: 20px;
+    color: var(--primary);
+    font-size: 12px;
+    text-shadow: 0 0 5px var(--primary);
+}
+
+#tools, #prompt-area {
+    pointer-events: auto; /* Enable interaction for UI */
+    background: var(--glass-bg);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    padding: 10px 15px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+#tools {
+    align-self: flex-start;
+}
+
+#prompt-area {
+    width: calc(100% - 30px);
+    max-width: 800px;
+    margin: 0 auto 10px auto;
+}
+
+button {
+    background: transparent;
+    color: #fff;
+    border: 1px solid var(--glass-border);
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-family: 'Outfit', sans-serif;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+button.active, button:hover {
+    background: rgba(0, 221, 238, 0.2);
+    box-shadow: 0 0 10px rgba(0, 221, 238, 0.4);
+}
+
+#btn-generate {
+    background: rgba(255, 0, 255, 0.1);
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: bold;
+}
+
+#btn-generate:hover {
+    background: rgba(255, 0, 255, 0.3);
+    box-shadow: 0 0 15px var(--accent);
+}
+
+input[type="text"] {
+    flex-grow: 1;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    padding: 10px;
+    color: #fff;
+    font-family: inherit;
+    font-size: 14px;
+    outline: none;
+}
+
+input[type="text"]:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 8px rgba(0, 221, 238, 0.4);
+}
+
+/* Toast */
+.toast {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-100px);
+    background: rgba(0, 221, 238, 0.15);
+    border: 1px solid var(--primary);
+    backdrop-filter: blur(12px);
+    padding: 12px 24px;
+    border-radius: 8px;
+    color: #fff;
+    font-family: 'Outfit', sans-serif;
+    z-index: 2000;
+    transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    box-shadow: 0 4px 15px rgba(0,0,0,0.5), 0 0 20px rgba(0,221,238,0.3);
+}
+
+.toast.show {
+    transform: translateX(-50%) translateY(0);
+}

@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>CanonGate Portal</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #0d1117;
+            color: #c9d1d9;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        header {
+            background: #161b22;
+            padding: 15px 20px;
+            border-bottom: 1px solid #30363d;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .logo {
+            width: 40px;
+            height: 40px;
+            background: #00ddee;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #000;
+            font-weight: bold;
+            font-size: 20px;
+        }
+
+        .title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .container {
+            padding: 20px;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 15px;
+        }
+
+        .card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            text-decoration: none;
+            color: #c9d1d9;
+            transition: all 0.2s;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .card:hover {
+            border-color: #00ddee;
+            background: #1f242c;
+            transform: translateY(-2px);
+        }
+
+        .icon {
+            font-size: 2rem;
+        }
+
+        .card-title {
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .card-desc {
+            font-size: 0.8rem;
+            color: #8b949e;
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <div class="logo">C</div>
+        <div class="title">CanonGate Portal (100.x.x.x)</div>
+    </header>
+
+    <div class="container">
+        <a href="mobile.html" class="card">
+            <div class="icon">📱</div>
+            <div class="card-title">Mobile Chat</div>
+            <div class="card-desc">テキストや音声でフィットネス報告・雑談</div>
+        </a>
+
+        <a href="guitar/index.html" class="card">
+            <div class="icon">🎸</div>
+            <div class="card-title">Guitar Buddy</div>
+            <div class="card-desc">自動スクロール＆BPM同期の譜面ビューア</div>
+        </a>
+
+        <a href="index.html" class="card">
+            <div class="icon">🎨</div>
+            <div class="card-title">Live Canvas</div>
+            <div class="card-desc">AIと一緒に描くリアルタイムお絵かき</div>
+        </a>
+
+        <!-- 将来的にここに追加されるタスクベースのアプリ -->
+    </div>
+</body>
+
+</html>

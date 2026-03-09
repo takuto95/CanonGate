@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>EgoGate HUD v2.1</title>
+  <title>CanonGate HUD</title>
   <link rel="stylesheet" href="index.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -14,619 +14,483 @@
 
 <body>
   <div class="hud-container">
-    <!-- Window Controls (Minimalist) -->
     <div class="win-ctrl">
-      <button id="mascot-btn" title="Mascot Mode" style="font-size:12px;">🐾</button>
       <button id="min-btn">ー</button>
       <button id="max-btn">▢</button>
       <button id="close-btn">×</button>
     </div>
 
-    <!-- Top Info Grid (Faint) -->
+    <!-- 
     <header class="hud-header">
-      <div class="hud-stat"><span class="label">CORE</span><span class="value online">ONL</span></div>
-      <div class="hud-stat"><span class="label">LINK</span><span class="value active">LNK</span></div>
-      <div class="hud-stat"><span class="label">SYNC</span><span class="value pulsed">PUL</span></div>
-    </header>
+       ... (Hidden as requested) ...
+    </header> 
+    -->
 
-    <!-- Main HUD Viewport -->
-    <main class="hud-viewport">
-      <!-- The HUD Core & Rings -->
-      <div class="egogate-core">
-        <div class="hud-ring r1"></div>
-        <div class="hud-ring r2"></div>
-        <div class="hud-ring r3"></div>
-        <div class="ego-orb idle" id="egoOrb"></div>
+    <div class="hud-main-layout">
+      <!-- Left: Intelligence Stream -->
+      <aside class="hud-wing left-wing">
+        <div style="font-size: 10px; opacity: 0.5; letter-spacing: 2px; margin-bottom: 15px;">INTELLIGENCE_STREAM</div>
+        <div class="stream-filters">
+          <button class="filter-btn active" onclick="setFilter('all')">全て</button>
+          <button class="filter-btn" onclick="setFilter('chat')">対話</button>
+          <button class="filter-btn" onclick="setFilter('soliloquy')">独り言</button>
+          <button class="filter-btn" onclick="setFilter('patrol')">巡回</button>
+        </div>
+        <div id="chatStream" class="chat-stream"></div>
+        <div id="thoughtStream" class="thought-stream"></div>
+      </aside>
 
-        <!-- Satellite Nodes (Hidden by default) -->
-        <div class="satellite-container" id="satelliteDock">
-          <div class="sat-node" id="btn-canvas" style="--angle: -135deg;">
-            <div class="node-inner" title="Canvas (Shift+C)">C</div>
-            <span class="node-label">CANVAS</span>
+      <!-- Center: Avatar Core -->
+      <main class="center-core">
+        <div class="avatar-frame" id="avatarFrame">
+          <iframe id="mascotFrame" src="../mascot-web/index.html?mode=viewer" frameborder="0" scrolling="no"
+            style="width:100%; height:100%; border:none; pointer-events: none;"></iframe>
+        </div>
+        <div style="font-size: 11px; letter-spacing: 4px; color: var(--neon-cyan); opacity: 0.7;">CANON_SYSTEM</div>
+        <div class="hud-command-area" style="flex-direction: column;">
+          <div class="voice-wave-container" id="voiceWave">
+            <div class="wave-bar"></div>
+            <div class="wave-bar"></div>
+            <div class="wave-bar"></div>
+            <div class="wave-bar"></div>
+            <div class="wave-bar"></div>
           </div>
-          <div class="sat-node" id="btn-hub" style="--angle: -45deg;">
-            <div class="node-inner" title="Hub (Shift+H)">H</div>
-            <span class="node-label">HUB</span>
-          </div>
-          <div class="sat-node" id="btn-report" style="--angle: 45deg;">
-            <div class="node-inner" title="Report (Shift+R)">R</div>
-            <span class="node-label">REPORT</span>
-          </div>
-          <div class="sat-node" id="btn-log" style="--angle: 135deg;">
-            <div class="node-inner" title="Logs (Shift+L)">L</div>
-            <span class="node-label">LOGS</span>
+          <div style="display: flex; align-items: center; gap: 15px; width: 100%;">
+            <button class="mic-btn" id="micBtn">
+              <svg viewBox="0 0 24 24">
+                <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
+                <path
+                  d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
+              </svg>
+            </button>
+            <input type="text" id="commandInput" placeholder="ENTER_COMMAND_OR_VOICE..." autocomplete="off">
           </div>
         </div>
-      </div>
+      </main>
 
-      <div class="hud-state-label" id="stateLabel">LINK STABLE</div>
-    </main>
-
-    <!-- Contextual Command Bar -->
-    <div class="hud-command-bar" id="commandArea">
-      <input type="text" id="commandInput" placeholder="> COMMAND_INPUT..." autocomplete="off">
+      <!-- Right: Mission/Task Dash -->
+      <aside class="hud-wing right-wing">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+          <div style="font-size: 10px; opacity: 0.5; letter-spacing: 2px;">MISSION_RADAR</div>
+          <div class="stream-filters" style="margin-bottom: 0; display: flex; align-items: center; gap: 8px;">
+            <button class="filter-btn active" id="btn-private" onclick="setWorkFilter(false)">生活</button>
+            <button class="filter-btn" id="btn-work" onclick="setWorkFilter(true)">仕事</button>
+            <button id="sync-btn" onclick="syncTasks()" title="SYNC_BRAIN"
+              style="background:none; border:none; color:var(--neon-cyan); cursor:pointer; font-size:12px; opacity:0.6; padding:0; display:flex; align-items:center; transition: all 0.2s;">🔄</button>
+          </div>
+        </div>
+        <div id="taskDash" style="flex: 1; display: flex; flex-direction: column; gap: 12px; overflow-y: auto;">
+          <div class="dash-category">
+            <div class="dash-category-header">判断 <span>DECISION</span></div>
+            <div id="dash-user_decision"></div>
+          </div>
+          <div class="dash-category">
+            <div class="dash-category-header">提案 <span>PROPOSAL</span></div>
+            <div id="dash-ego_proposal"></div>
+          </div>
+          <div class="dash-category">
+            <div class="dash-category-header">実行中 (Ego) <span>EGO_RUNNING</span></div>
+            <div id="dash-ego_running"></div>
+          </div>
+          <div class="dash-category">
+            <div class="dash-category-header">実行中 (User) <span>USER_RUNNING</span></div>
+            <div id="dash-user_running"></div>
+          </div>
+          <div class="dash-category">
+            <div class="dash-category-header">要整理 <span>NEEDS_ORG</span></div>
+            <div id="dash-needs_org"></div>
+          </div>
+        </div>
+      </aside>
     </div>
 
-    <!-- Hex Menu Trigger -->
-    <div class="hex-trigger" id="hexMenuBtn" title="HUD System (Menu)">
-      <div class="hex-icon">
-        <svg viewBox="0 0 100 100">
-          <path d="M50 5 L89 27.5 L89 72.5 L50 95 L11 72.5 L11 27.5 Z" fill="none" stroke="currentColor"
-            stroke-width="4" />
-          <circle cx="50" cy="50" r="10" fill="currentColor" />
-        </svg>
-      </div>
-    </div>
-
-    <!-- Audio Unlock (Essential) -->
-    <button id="audioUnlockBtn" class="audio-unlock">UNSYNCED_AUDIO</button>
-
-    <!-- App Panels (Overlays) -->
-    <div id="overlay-container" class="overlay-container">
-      <div id="panel-log" class="hud-panel">
-        <div class="panel-header"><span>THOUGHT_LOG</span> <button class="panel-close">×</button></div>
-        <div class="panel-content chat-scroll" id="logContent"></div>
-      </div>
-
-      <div id="panel-report" class="hud-panel">
-        <div class="panel-header"><span>PATROL_REPORT</span> <button class="panel-close">×</button></div>
-        <div class="panel-content patrol-scroll" id="patrolPeekContent"></div>
-        <div class="panel-footer"><button id="report-history-btn" class="ctrl-btn-sm">FULL_HISTORY</button></div>
-      </div>
-
-      <div id="panel-hub" class="hud-panel">
-        <div class="panel-header">
-          <span>TASK_HUB</span>
-          <div class="hub-domain-switcher">
-            <button class="hub-domain-btn active" data-domain="">PRIV</button>
-            <button class="hub-domain-btn" data-domain="tech">TECH</button>
-            <button class="hub-domain-btn" data-domain="all">ALL</button>
-          </div>
-          <button class="panel-close">×</button>
-        </div>
-        <div class="panel-content" id="hubContent">
-          <div class="hub-loading">LOADING TASKS...</div>
-        </div>
-        <div class="panel-footer">
-          <button id="hub-refresh-btn" class="ctrl-btn-sm">REFRESH</button>
-        </div>
-      </div>
-
-      <div id="panel-canvas" class="hud-panel">
-        <div class="panel-header"><span>WORKSPACE_CANVAS</span> <button class="panel-close">×</button></div>
-        <div class="panel-content" id="canvasContent">
-          <div class="hub-loading">LOADING CANVAS FILES...</div>
-        </div>
-        <div class="panel-footer">
-          <label class="ctrl-btn-sm" style="cursor:pointer;">UPLOAD<input type="file" id="canvasFileInput"
-              accept=".mmd,.svg,.drawio,.excalidraw,.json,.png,.jpg,.jpeg" style="display:none;"></label>
-          <button id="canvas-refresh-btn" class="ctrl-btn-sm">REFRESH</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Alert Toast -->
-    <div id="hub-toast-simple">
-      <div class="icon">!</div>
-      <div class="content">ALERT</div>
-    </div>
+    <div id="toast" class="toast">NOTIFICATION</div>
   </div>
 
   <script>
-    (function () {
-      'use strict';
-      let WS_PORT = 8080; // default, overridden by /api/ego-gate-config
-      const egoOrb = document.getElementById('egoOrb');
-      const stateLabel = document.getElementById('stateLabel');
-      const logContent = document.getElementById('logContent');
-      const audioUnlockBtn = document.getElementById('audioUnlockBtn');
-      const hubToast = document.getElementById('hub-toast-simple');
-      const hexBtn = document.getElementById('hexMenuBtn');
-      const satDock = document.getElementById('satelliteDock');
-      const cmdArea = document.getElementById('commandArea');
-      const cmdInput = document.getElementById('commandInput');
+    const mascotFrame = document.getElementById('mascotFrame');
+    const avatarFrame = document.getElementById('avatarFrame');
+    const commandInput = document.getElementById('commandInput');
+    const chatStream = document.getElementById('chatStream');
+    const thoughtStream = document.getElementById('thoughtStream');
+    const taskDash = document.getElementById('taskDash');
+    const toast = document.getElementById('toast');
 
-      let ws = null;
-      let audioUnlocked = false;
-      let isPlaying = false;
-      let audioQueue = [];
-      let audioEl = null;
-      let reconnectAttempts = 0;
+    function showToast(txt) {
+      toast.textContent = txt;
+      toast.classList.add('active');
+      setTimeout(() => toast.classList.remove('active'), 3000);
+    }
 
-      // HUD Logic: Reveal Menu (Canvas & Hub visible by default)
-      satDock.classList.add('active');
-      cmdArea.classList.add('active');
-      hexBtn.onclick = () => {
-        satDock.classList.toggle('active');
-        cmdArea.classList.toggle('active');
-        hexBtn.classList.toggle('active');
-      };
+    // State labels
+    function setStateValue(id, val) {
+      const el = document.getElementById(id);
+      if (el) el.textContent = val;
+    }
 
-      // Panel Navigation
-      const panels = {
-        'btn-canvas': 'panel-canvas',
-        'btn-hub': 'panel-hub',
-        'btn-report': 'panel-report',
-        'btn-log': 'panel-log'
-      };
+    // Append logs
+    let currentFilter = 'all';
+    function appendLog(who, text, tag = 'chat') {
+      if (!text) return;
+      const div = document.createElement('div');
+      div.className = 'chat-msg ' + who + ' tag-' + tag;
+      div.textContent = text;
+      div.dataset.tag = tag;
 
-      const overlay = document.getElementById('overlay-container');
+      // Filter logic
+      if (currentFilter !== 'all' && currentFilter !== tag) {
+        div.style.display = 'none';
+      }
 
-      Object.keys(panels).forEach(btnId => {
-        document.getElementById(btnId).onclick = () => {
-          const panelId = panels[btnId];
-          const panel = document.getElementById(panelId);
-          const wasActive = panel.classList.contains('active');
+      chatStream.appendChild(div);
+      chatStream.scrollTop = chatStream.scrollHeight;
 
-          document.querySelectorAll('.hud-panel').forEach(p => p.classList.remove('active'));
-          overlay.classList.remove('active');
+      if (who === 'ego') {
+        avatarFrame.classList.add('speaking');
+        setTimeout(() => avatarFrame.classList.remove('speaking'), 2000);
+      }
+    }
 
-          if (!wasActive) {
-            overlay.classList.add('active');
-            panel.classList.add('active');
-          }
-        };
+    function setFilter(filter) {
+      currentFilter = filter;
+      document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('onclick').includes(filter));
       });
 
-      document.querySelectorAll('.panel-close').forEach(btn => {
-        btn.onclick = () => {
-          overlay.classList.remove('active');
-          document.querySelectorAll('.hud-panel').forEach(p => p.classList.remove('active'));
-        };
+      document.querySelectorAll('.chat-msg').forEach(msg => {
+        if (filter === 'all' || msg.dataset.tag === filter) {
+          msg.style.display = 'block';
+        } else {
+          msg.style.display = 'none';
+        }
+      });
+    }
+
+    let workMode = false;
+    function setWorkFilter(isWork) {
+      workMode = isWork;
+      document.getElementById('btn-work').classList.toggle('active', isWork);
+      document.getElementById('btn-private').classList.toggle('active', !isWork);
+      renderTasks(lastTasks);
+    }
+
+    let lastTasks = [];
+    function renderTasks(tasks) {
+      lastTasks = tasks;
+      const categories = ['user_decision', 'ego_proposal', 'ego_running', 'user_running', 'needs_org'];
+      categories.forEach(c => {
+        const container = document.getElementById('dash-' + c);
+        if (!container) return;
+
+        const filtered = tasks.filter(t => {
+          const catMatch = t.category === c;
+          const workMatch = workMode ? t.is_work : !t.is_work;
+          return catMatch && workMatch;
+        });
+
+        let html = '';
+        filtered.slice(0, 6).forEach(t => {
+          let btnLabel = 'GO';
+          if (c === 'user_decision') btnLabel = 'OK';
+          if (c === 'ego_running') btnLabel = 'STOP';
+          if (c === 'user_running') btnLabel = 'DONE';
+          if (c === 'needs_org') btnLabel = 'CHECK';
+
+          let title = t.title;
+          // Rename "Before Running" logic (User mentioned if GO is pressed it becomes running)
+          // We assume for now if it's in propuesta, it's "Before Running"
+          const displayLabel = c === 'ego_proposal' ? '実行前' : '';
+
+          html += `<div class="dash-card ${c}">`
+            + `<div style="display:flex; flex-direction:column; flex:1;">`
+            + `<span style="font-size:9px; opacity:0.5;">${displayLabel}</span>`
+            + `<span style="font-size:11px;">${title}</span>`
+            + `</div>`
+            + `<button class="dash-card-btn" onclick="handleTask('${t.id}', '${c}')">${btnLabel}</button>`
+            + `</div>`;
+        });
+        container.innerHTML = html;
+        container.parentElement.style.display = filtered.length > 0 ? 'block' : 'none';
       });
 
-      // WebSocket & State (Core logic preserved)
-      function setState(s) {
-        egoOrb.className = 'ego-orb ' + s;
-        document.querySelector('.egogate-core').className = 'egogate-core ' + s;
-        const labels = {
-          idle: 'LINK STABLE', listening: 'SYSTEM LISTENING',
-          speaking: 'EGO TRANSMITTING', connected: 'NEURAL SYNC ON',
-          off: 'CORE OFFLINE', muted: 'VOICE BYPASS',
-          reconnecting: 'RE-SYNCING...', error: 'PULSE FAILURE'
-        };
-        stateLabel.textContent = labels[s] || s.toUpperCase();
+      // Pulse avatar if waiting for approval
+      if (tasks.some(t => t.category === 'user_decision')) {
+        avatarFrame.style.borderColor = '#ff9d00';
+        avatarFrame.style.boxShadow = '0 0 15px rgba(255,157,0,0.3)';
+      } else {
+        avatarFrame.style.borderColor = '';
+        avatarFrame.style.boxShadow = '';
       }
+    }
 
-      function showToast(text) {
-        hubToast.querySelector('.content').textContent = text;
-        hubToast.classList.add('active');
-        setTimeout(() => hubToast.classList.remove('active'), 5000);
-      }
+    function addThought(txt) {
+      const div = document.createElement('div');
+      const isSystem = txt.startsWith('SYSTEM') || txt.startsWith('[HUB]');
+      div.className = 'thought-msg' + (isSystem ? ' system' : '');
+      div.textContent = '> ' + txt;
+      thoughtStream.prepend(div);
+      if (thoughtStream.children.length > 40) thoughtStream.lastElementChild.remove();
+    }
 
-      function appendLog(who, text) {
-        if (!text) return;
-        const div = document.createElement('div');
-        div.className = 'msg ' + who;
-        div.textContent = text;
-        logContent.appendChild(div);
-        logContent.scrollTop = logContent.scrollHeight;
-      }
+    // Audio System (ADR-0114)
+    let audioCtx;
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    } catch (e) {
+      console.error("Web Audio API not supported");
+    }
 
-      function connect() {
-        const wsHost = (window.location.protocol === 'file:') ? '127.0.0.1' : window.location.hostname;
-        ws = new WebSocket('ws://' + wsHost + ':' + WS_PORT);
-        ws.onopen = () => { appendLog('ego', 'EGOGATE.sync(completed)'); setState('idle'); };
-        ws.onmessage = (e) => {
-          const msg = JSON.parse(e.data);
-          if (msg.type === 'audio') {
-            audioQueue.push({ base64: msg.data });
-            if (msg.text) appendLog('ego', msg.text);
-            tryPlayNext();
-          } else if (msg.type === 'user_text') {
-            appendLog('user', msg.text);
-            setState('listening');
-            setTimeout(() => { if (!isPlaying) setState('idle'); }, 2000);
-          } else if (msg.type === 'hub_alert') {
-            appendLog('ego', `[${msg.tag}] ${msg.text}`);
-            showToast(`${msg.tag}: ${msg.text}`);
-          }
-        };
-        ws.onclose = () => { setState('reconnecting'); setTimeout(connect, 3000); };
-      }
+    let audioQueue = [];
+    let isPlaying = false;
 
-      function tryPlayNext() {
-        if (isPlaying || audioQueue.length === 0 || !audioUnlocked) return;
-        const item = audioQueue.shift();
-        if (!audioEl) {
-          audioEl = new Audio();
-          audioEl.onended = () => { isPlaying = false; tryPlayNext(); if (audioQueue.length === 0) setState('idle'); };
-        }
-        const blob = new Blob([Uint8Array.from(atob(item.base64), c => c.charCodeAt(0))], { type: 'audio/mpeg' });
-        audioEl.src = URL.createObjectURL(blob);
-        isPlaying = true;
-        setState('speaking');
-        audioEl.play();
-      }
-
-      cmdInput.onkeydown = (e) => {
-        if (e.key === 'Enter') {
-          const txt = cmdInput.value.trim();
-          if (txt && ws && ws.readyState === 1) {
-            appendLog('user', txt);
-            ws.send(JSON.stringify({ type: 'text_input', text: txt }));
-            cmdInput.value = '';
-          }
-        }
-      };
-
-      audioUnlockBtn.onclick = () => { audioUnlocked = true; audioUnlockBtn.style.display = 'none'; new Audio().play(); tryPlayNext(); };
-
-      // Electron IPC
+    async function decodeAndPlay(base64Data, format = 'mp3') {
+      if (!audioCtx) return;
       try {
-        const electron = window.require ? window.require('electron') : null;
-        if (electron) {
-          const { ipcRenderer } = electron;
-          document.getElementById('min-btn').onclick = () => ipcRenderer.send('minimize-window');
-          document.getElementById('max-btn').onclick = () => ipcRenderer.send('maximize-window');
-          document.getElementById('close-btn').onclick = () => window.close();
-          document.getElementById('mascot-btn').onclick = () => ipcRenderer.send('change-mode', 'mascot');
-        }
-      } catch (e) { }
+        const mime = format === 'wav' ? 'audio/wav' : 'audio/mp3';
+        const resp = await fetch(`data:${mime};base64,${base64Data}`);
+        const arrayBuffer = await resp.arrayBuffer();
+        const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+        audioQueue.push(audioBuffer);
 
-      // ── Hub Integration (Phase 1 — ADR-0158) ──
-      const COMMANDER_API = (window.location.protocol === 'file:' ? 'http://127.0.0.1:8000' : window.location.protocol + '//' + window.location.hostname + ':8000');
-      let HUB_DOMAIN = (function () { var p = new URLSearchParams(window.location.search); return p.get('domain') || ''; })();
-      const hubContent = document.getElementById('hubContent');
-      let hubLoaded = false;
+        // Show audio activity in UI
+        const statusEl = document.getElementById('val-status');
+        if (statusEl && statusEl.textContent === 'LISTENING') statusEl.textContent = 'SPEAKING'; // Added null check for statusEl
 
-      // Domain switcher
-      document.querySelectorAll('.hub-domain-btn').forEach(btn => {
-        if (btn.dataset.domain === HUB_DOMAIN) { btn.classList.add('active'); } else { btn.classList.remove('active'); }
-        btn.onclick = () => {
-          HUB_DOMAIN = btn.dataset.domain;
-          document.querySelectorAll('.hub-domain-btn').forEach(b => b.classList.remove('active'));
-          btn.classList.add('active');
-          loadHubTasks();
-        };
-      });
-      let hubWs = null;
-      let hubExecLog = null;
-
-      async function loadHubTasks() {
-        hubContent.innerHTML = '<div class="hub-loading">FETCHING TASKS...</div>';
-        try {
-          const res = await fetch(COMMANDER_API + '/api/tasks' + (HUB_DOMAIN ? '?domain=' + encodeURIComponent(HUB_DOMAIN) : ''));
-          if (!res.ok) throw new Error('HTTP ' + res.status);
-          const data = await res.json();
-          renderHubTasks(data.tasks || []);
-          hubLoaded = true;
-        } catch (err) {
-          hubContent.innerHTML = '<div class="hub-error">COMMANDER_API OFFLINE<br><span style="font-size:9px;color:var(--text-dim);">' + err.message + '</span></div>';
-        }
+        if (!isPlaying) playNext();
+      } catch (e) {
+        console.error("Audio Decode Error:", e);
+        addThought("Audio Error: " + e.message);
       }
+    }
 
-      function renderHubTasks(tasks) {
-        if (tasks.length === 0) {
-          hubContent.innerHTML = '<div class="hub-loading">NO ACTIVE TASKS</div>';
-          return;
-        }
-        // Group by status
-        const groups = {};
-        tasks.forEach(t => {
-          const g = t.status || 'unknown';
-          if (!groups[g]) groups[g] = [];
-          groups[g].push(t);
-        });
-
-        const order = ['next-action', 'inbox', 'evaluating', 'clickup'];
-        const labels = { 'next-action': 'NEXT ACTIONS', 'inbox': 'INBOX / BRIEFS', 'evaluating': 'EVALUATING', 'clickup': 'CLICKUP' };
-        let html = '<div class="hub-task-list">';
-
-        order.forEach(status => {
-          const items = groups[status];
-          if (!items || items.length === 0) return;
-          html += '<div class="hub-section-label">' + (labels[status] || status.toUpperCase()) + '</div>';
-          items.forEach(t => {
-            const running = t.is_running ? ' running' : '';
-            const isClickup = status === 'clickup';
-            const cuStatus = (t.metadata && t.metadata.clickup_status) || '';
-            const badgeText = isClickup ? (cuStatus.slice(0, 6).toUpperCase() || 'CU') : status.replace('-', ' ').toUpperCase().slice(0, 6);
-            const btnLabel = isClickup ? 'OPEN' : (t.is_running ? 'RUNNING' : 'EXEC');
-            const disabled = (!isClickup && t.is_running) ? ' disabled' : '';
-            const btnData = isClickup ? ' data-url="' + escHtml(t.filepath) + '"' : ' data-id="' + escHtml(t.id) + '"';
-            const executor = (t.metadata && t.metadata.executor) || '';
-            const execTag = executor ? '<span class="hub-executor-tag ' + executor + '">' + executor.toUpperCase() + '</span>' : '';
-            html += '<div class="hub-task-card' + running + '" data-id="' + escHtml(t.id) + '">'
-              + '<span class="hub-task-badge ' + status + '">' + badgeText + '</span>'
-              + execTag
-              + '<span class="hub-task-title" title="' + escHtml(t.title) + '">' + escHtml(t.title) + '</span>'
-              + '<button class="hub-task-exec' + (isClickup ? ' clickup-open' : '') + '"' + disabled + btnData + '>' + btnLabel + '</button>'
-              + '</div>';
-          });
-        });
-
-        // Any remaining groups
-        Object.keys(groups).forEach(s => {
-          if (order.includes(s)) return;
-          const items = groups[s];
-          html += '<div class="hub-section-label">' + s.toUpperCase() + '</div>';
-          items.forEach(t => {
-            html += '<div class="hub-task-card" data-id="' + escHtml(t.id) + '">'
-              + '<span class="hub-task-badge">' + s.slice(0, 6).toUpperCase() + '</span>'
-              + '<span class="hub-task-title">' + escHtml(t.title) + '</span>'
-              + '<button class="hub-task-exec" data-id="' + escHtml(t.id) + '">EXEC</button>'
-              + '</div>';
-          });
-        });
-
-        html += '</div>';
-        hubContent.innerHTML = html;
-
-        // Bind exec buttons (GTD) and open buttons (ClickUp)
-        hubContent.querySelectorAll('.hub-task-exec').forEach(btn => {
-          if (btn.classList.contains('clickup-open')) {
-            btn.onclick = (e) => { e.stopPropagation(); window.open(btn.dataset.url, '_blank'); };
-          } else {
-            btn.onclick = (e) => { e.stopPropagation(); executeTask(btn.dataset.id); };
-          }
-        });
-
-        // Bind card click for detail
-        hubContent.querySelectorAll('.hub-task-card').forEach(card => {
-          card.onclick = () => showTaskDetail(card.dataset.id);
-        });
+    function playNext() {
+      if (!audioCtx || audioQueue.length === 0) {
+        isPlaying = false;
+        return;
       }
+      isPlaying = true;
+      const buffer = audioQueue.shift();
+      const source = audioCtx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(audioCtx.destination);
+      source.onended = playNext;
+      source.start();
+    }
 
-      function escHtml(s) {
-        const d = document.createElement('div');
-        d.textContent = s || '';
-        return d.innerHTML;
-      }
-
-      async function showTaskDetail(taskId) {
-        try {
-          const res = await fetch(COMMANDER_API + '/api/tasks/' + encodeURIComponent(taskId));
-          if (!res.ok) return;
-          const data = await res.json();
-          const preview = (data.metadata && data.metadata.content_preview) || '';
-          // Insert detail below the task list
-          let detailEl = hubContent.querySelector('.hub-task-detail');
-          if (detailEl) detailEl.remove();
-          detailEl = document.createElement('div');
-          detailEl.className = 'hub-task-detail';
-          detailEl.textContent = taskId + '\n\n' + preview;
-          hubContent.appendChild(detailEl);
-        } catch (e) { /* ignore */ }
-      }
-
-      async function executeTask(taskId) {
-        try {
-          const res = await fetch(COMMANDER_API + '/api/execute', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ task_id: taskId })
-          });
-          if (!res.ok) {
-            appendLog('ego', '[HUB] Execute failed: HTTP ' + res.status);
-            return;
-          }
-          appendLog('ego', '[HUB] Task started: ' + taskId);
-          connectHubWs(taskId);
-          // Show inline log area
-          let logEl = hubContent.querySelector('.hub-exec-log');
-          if (!logEl) {
-            logEl = document.createElement('div');
-            logEl.className = 'hub-exec-log';
-            hubContent.appendChild(logEl);
-          }
-          logEl.innerHTML = '<div class="log-line">EXECUTING ' + escHtml(taskId) + '...</div>';
-          hubExecLog = logEl;
-        } catch (e) {
-          appendLog('ego', '[HUB] Execute error: ' + e.message);
-        }
-      }
-
-      function connectHubWs(taskId) {
-        if (hubWs) { try { hubWs.close(); } catch (_) { } }
-        try {
-          hubWs = new WebSocket(COMMANDER_API.replace(/^http/, 'ws') + '/ws');
-          hubWs.onmessage = (e) => {
-            try {
-              const msg = JSON.parse(e.data);
-              if (msg.type === 'task_log' && hubExecLog) {
-                const cls = msg.level === 'error' ? 'error' : msg.level === 'warning' ? 'warning' : msg.level === 'success' ? 'success' : '';
-                const line = document.createElement('div');
-                line.className = 'log-line ' + cls;
-                line.textContent = msg.message || '';
-                hubExecLog.appendChild(line);
-                hubExecLog.scrollTop = hubExecLog.scrollHeight;
-              }
-              if (msg.type === 'task_done') {
-                appendLog('ego', '[HUB] Task done: ' + (msg.task_id || taskId));
-                setTimeout(loadHubTasks, 1000);
-              }
-            } catch (_) { }
-          };
-          hubWs.onerror = () => { };
-          hubWs.onclose = () => { hubWs = null; };
-        } catch (_) { }
-      }
-
-      // Auto-load hub tasks when panel opens
-      const origHubClick = document.getElementById('btn-hub').onclick;
-      document.getElementById('btn-hub').onclick = (e) => {
-        origHubClick && origHubClick(e);
-        // Panel is now toggled; if active, load tasks
+    function syncTasks() {
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 'refresh_tasks' }));
+        const btn = document.getElementById('sync-btn');
+        btn.style.transform = 'rotate(360deg)';
+        btn.style.opacity = '1';
         setTimeout(() => {
-          if (document.getElementById('panel-hub').classList.contains('active')) {
-            loadHubTasks();
-          }
-        }, 50);
-      };
+          btn.style.transform = 'rotate(0deg)';
+          btn.style.opacity = '0.6';
+        }, 1000);
+      }
+    }
 
-      document.getElementById('hub-refresh-btn').onclick = loadHubTasks;
+    const unlockAudio = () => {
+      if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume().then(() => {
+          console.log("AudioContext resumed");
+          addThought("Audio system online.");
+        });
+      }
+      if (mascotFrame && mascotFrame.contentWindow) {
+        mascotFrame.contentWindow.postMessage({ type: 'resume_audio' }, '*');
+      }
+    };
+    window.addEventListener('click', unlockAudio, { once: true });
+    window.addEventListener('keydown', unlockAudio, { once: true });
+    window.addEventListener('touchstart', unlockAudio, { once: true });
 
-      // ── Canvas Integration (Phase 1 — ADR-0156) ──
-      const canvasContent = document.getElementById('canvasContent');
-      const canvasFileInput = document.getElementById('canvasFileInput');
-
-      async function loadCanvasFiles() {
-        canvasContent.innerHTML = '<div class="hub-loading">SCANNING CANVAS FILES...</div>';
+    // WebSocket Logic
+    let ws = null;
+    function connect() {
+      ws = new WebSocket('ws://localhost:8082/ws');
+      ws.onmessage = (e) => {
         try {
-          const res = await fetch(COMMANDER_API + '/api/canvas/files');
-          if (!res.ok) throw new Error('HTTP ' + res.status);
-          const data = await res.json();
-          renderCanvasFiles(data.files || []);
-        } catch (err) {
-          canvasContent.innerHTML = '<div class="hub-error">CANVAS API OFFLINE<br><span style="font-size:9px;color:var(--text-dim);">' + err.message + '</span></div>';
-        }
-      }
+          const msg = JSON.parse(e.data);
 
-      function renderCanvasFiles(files) {
-        if (files.length === 0) {
-          canvasContent.innerHTML = '<div class="hub-loading">NO CANVAS FILES<br><span style="font-size:9px;color:var(--text-dim);">Upload files via the UPLOAD button below</span></div>';
-          return;
-        }
-        let html = '<div class="hub-task-list">';
-        html += '<div class="hub-section-label">CANVAS FILES (' + files.length + ')</div>';
-        files.forEach(f => {
-          const ext = f.extension.replace('.', '').toUpperCase();
-          const size = f.size < 1024 ? f.size + 'B' : Math.round(f.size / 1024) + 'KB';
-          const textBadge = f.is_text ? 'next-action' : 'inbox';
-          const isImage = /^\.(png|jpg|jpeg)$/i.test(f.extension);
-          let actionBtn = '';
-          if (f.is_text) actionBtn = '<button class="hub-task-exec canvas-edit-btn" data-path="' + escHtml(f.path) + '">EDIT</button>';
-          else if (isImage) actionBtn = '<button class="hub-task-exec canvas-view-btn" data-path="' + escHtml(f.path) + '">VIEW</button>';
-          html += '<div class="hub-task-card" data-path="' + escHtml(f.path) + '" data-text="' + (f.is_text ? '1' : '0') + '">'
-            + '<span class="hub-task-badge ' + textBadge + '">' + ext + '</span>'
-            + '<span class="hub-task-title" title="' + escHtml(f.name) + '">' + escHtml(f.name) + '</span>'
-            + '<span style="font-size:8px;color:var(--text-dim);flex-shrink:0;">' + size + '</span>'
-            + actionBtn
-            + '</div>';
-        });
-        html += '</div>';
-        canvasContent.innerHTML = html;
+          if (msg.type === 'audio') decodeAndPlay(msg.data, msg.format);
 
-        canvasContent.querySelectorAll('.canvas-edit-btn').forEach(btn => {
-          btn.onclick = (e) => { e.stopPropagation(); openCanvasEditor(btn.dataset.path); };
-        });
-        canvasContent.querySelectorAll('.canvas-view-btn').forEach(btn => {
-          btn.onclick = (e) => { e.stopPropagation(); viewCanvasImage(btn.dataset.path); };
-        });
-      }
-
-      function viewCanvasImage(path) {
-        const url = COMMANDER_API + '/api/canvas/file/view?path=' + encodeURIComponent(path);
-        let viewer = canvasContent.querySelector('.canvas-image-viewer');
-        if (viewer) viewer.remove();
-        viewer = document.createElement('div');
-        viewer.className = 'canvas-image-viewer';
-        viewer.innerHTML = '<div class="hub-section-label">VIEW: ' + escHtml(path.split('/').pop()) + '</div>'
-          + '<img src="' + url + '" alt="canvas" style="max-width:100%;max-height:60vh;object-fit:contain;background:#1e293b;border-radius:6px;">'
-          + '<div style="margin-top:6px;"><button class="ctrl-btn-sm" onclick="this.closest(\'.canvas-image-viewer\').remove()">CLOSE</button></div>';
-        canvasContent.appendChild(viewer);
-      }
-
-      async function openCanvasEditor(path) {
-        try {
-          const res = await fetch(COMMANDER_API + '/api/canvas/file?path=' + encodeURIComponent(path));
-          if (!res.ok) throw new Error('HTTP ' + res.status);
-          const data = await res.json();
-          // Show inline editor
-          let editor = canvasContent.querySelector('.canvas-editor');
-          if (editor) editor.remove();
-          editor = document.createElement('div');
-          editor.className = 'canvas-editor';
-          editor.innerHTML = '<div class="hub-section-label">EDITING: ' + escHtml(path.split('/').pop()) + '</div>'
-            + '<textarea class="canvas-textarea" id="canvasEditorArea">' + escHtml(data.content) + '</textarea>'
-            + '<div style="margin-top:6px;display:flex;gap:6px;justify-content:flex-end;">'
-            + '<button class="ctrl-btn-sm" id="canvasSaveBtn">SAVE</button>'
-            + '<button class="ctrl-btn-sm" id="canvasCancelBtn">CANCEL</button>'
-            + '</div>';
-          canvasContent.appendChild(editor);
-          document.getElementById('canvasCancelBtn').onclick = () => editor.remove();
-          document.getElementById('canvasSaveBtn').onclick = async () => {
-            const content = document.getElementById('canvasEditorArea').value;
-            try {
-              const saveRes = await fetch(COMMANDER_API + '/api/canvas/file', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: path, content: content })
-              });
-              if (!saveRes.ok) throw new Error('HTTP ' + saveRes.status);
-              appendLog('ego', '[CANVAS] Saved: ' + path);
-              editor.remove();
-              loadCanvasFiles();
-            } catch (err) {
-              appendLog('ego', '[CANVAS] Save failed: ' + err.message);
+          if (msg.type === 'state') {
+            setStateValue('ego-state', msg.state.toUpperCase());
+            // Sync to Mascot Frame
+            if (mascotFrame && mascotFrame.contentWindow) {
+              mascotFrame.contentWindow.postMessage({ type: 'state', state: msg.state }, '*');
             }
-          };
+            // Local visual feedback
+            if (msg.state === 'speaking') {
+              avatarFrame.classList.add('speaking');
+              avatarFrame.classList.remove('thinking');
+            } else if (msg.state === 'thinking' || msg.state === 'transcribing') {
+              avatarFrame.classList.add('thinking');
+              avatarFrame.classList.remove('speaking');
+            } else {
+              avatarFrame.classList.remove('speaking');
+              avatarFrame.classList.remove('thinking');
+            }
+          }
+
+          if (msg.type === 'chat') {
+            appendLog(msg.who, msg.text, msg.tag || 'chat');
+          }
+
+          if (msg.type === 'thought') addThought(msg.text);
+
+          if (msg.type === 'level_data') {
+            setStateValue('val-lvl', msg.lvl);
+            const xpBar = document.getElementById('bar-xp');
+            if (xpBar) xpBar.style.width = msg.xp_percent + '%';
+          }
+
+          if (msg.type === 'tasks') renderTasks(msg.tasks);
+
+          if (msg.type === 'task_status_change') {
+            const el = document.querySelector(`.dash-card-btn[onclick*="'${msg.task_id}'"]`);
+            if (el) {
+              const card = el.closest('.dash-card');
+              if (msg.status === 'running') {
+                el.textContent = 'RUNNING';
+                el.disabled = true;
+                el.style.background = 'var(--neon-cyan)';
+                el.style.color = '#000';
+                el.style.animation = 'mic-pulse 1.5s infinite';
+                if (card) card.style.borderLeft = '4px solid var(--neon-cyan)';
+              } else if (msg.status === 'completed' || msg.status === 'approved') {
+                el.textContent = '✓ DONE';
+                el.disabled = true;
+                el.style.background = '#0a3';
+                el.style.color = '#fff';
+                if (card) card.style.opacity = '0.5';
+              } else if (msg.status === 'stopped') {
+                el.textContent = 'STOPPED';
+                el.disabled = true;
+                el.style.background = '#f44';
+                el.style.color = '#fff';
+              }
+            }
+            showToast(msg.status.toUpperCase() + ': ' + msg.task_id);
+          }
+
+          // Phase 2: Confirmation Dialog for task/ADR creation
+          if (msg.type === 'confirm_dialog') {
+            const overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;-webkit-app-region:no-drag';
+            overlay.innerHTML = `<div style="background:rgba(0,20,30,0.95);border:1px solid var(--neon-cyan);padding:30px;max-width:400px;text-align:center;border-radius:4px;">
+              <div style="color:var(--neon-cyan);margin-bottom:15px;font-size:13px;">${msg.message}</div>
+              <div style="display:flex;gap:15px;justify-content:center;">
+                <button id="confirm-yes" style="background:var(--neon-cyan);color:#000;border:none;padding:8px 20px;cursor:pointer;">はい</button>
+                <button id="confirm-no" style="background:transparent;color:var(--neon-cyan);border:1px solid var(--neon-cyan);padding:8px 20px;cursor:pointer;">いいえ</button>
+              </div>
+            </div>`;
+            document.body.appendChild(overlay);
+            overlay.querySelector('#confirm-yes').onclick = () => {
+              ws.send(JSON.stringify({ type: 'confirm_action', action_id: msg.action_id, confirmed: true }));
+              overlay.remove();
+            };
+            overlay.querySelector('#confirm-no').onclick = () => {
+              ws.send(JSON.stringify({ type: 'confirm_action', action_id: msg.action_id, confirmed: false }));
+              overlay.remove();
+            };
+          }
+
+          if (msg.type === 'tts_error') {
+            addThought("TTS ERROR: " + msg.error);
+            console.error("TTS Error:", msg.error);
+          }
         } catch (err) {
-          appendLog('ego', '[CANVAS] Load failed: ' + err.message);
+          console.error("WS Parse Error:", err);
+        }
+      };
+      ws.onclose = () => setTimeout(connect, 3000);
+      ws.onerror = (err) => console.error("WS Error:", err);
+    }
+    connect();
+
+    // Command Input
+    commandInput.onkeydown = (e) => {
+      if (e.key === 'Enter') {
+        const txt = commandInput.value.trim();
+        if (txt && ws && ws.readyState === 1) {
+          appendLog('user', txt);
+          ws.send(JSON.stringify({ type: 'text_input', text: txt }));
+          commandInput.value = '';
         }
       }
+    };
 
-      // Upload handler
-      canvasFileInput.onchange = async () => {
-        const file = canvasFileInput.files[0];
-        if (!file) return;
-        const form = new FormData();
-        form.append('file', file);
-        try {
-          const res = await fetch(COMMANDER_API + '/api/canvas/upload', { method: 'POST', body: form });
-          if (!res.ok) throw new Error('HTTP ' + res.status);
-          const data = await res.json();
-          appendLog('ego', '[CANVAS] Uploaded: ' + data.filename);
-          loadCanvasFiles();
-        } catch (err) {
-          appendLog('ego', '[CANVAS] Upload failed: ' + err.message);
-        }
-        canvasFileInput.value = '';
-      };
+    // Mic (Toggle) System
+    const micBtn = document.getElementById('micBtn');
+    const voiceWave = document.getElementById('voiceWave');
+    let isRecording = false;
 
-      // Auto-load canvas when panel opens
-      const origCanvasClick = document.getElementById('btn-canvas').onclick;
-      document.getElementById('btn-canvas').onclick = (e) => {
-        origCanvasClick && origCanvasClick(e);
-        setTimeout(() => {
-          if (document.getElementById('panel-canvas').classList.contains('active')) {
-            loadCanvasFiles();
-          }
-        }, 50);
-      };
+    function toggleMic() {
+      if (!ws || ws.readyState !== 1) return;
 
-      document.getElementById('canvas-refresh-btn').onclick = loadCanvasFiles;
+      if (!isRecording) {
+        // START RECORDING
+        isRecording = true;
+        micBtn.classList.add('active');
+        voiceWave.classList.add('active');
+        avatarFrame.classList.add('thinking'); // Feedback
+        ws.send(JSON.stringify({ type: 'start_mic' }));
+      } else {
+        // STOP & PROCESS
+        isRecording = false;
+        micBtn.classList.remove('active');
+        voiceWave.classList.remove('active');
+        avatarFrame.classList.remove('thinking');
+        ws.send(JSON.stringify({ type: 'stop_mic' }));
+      }
+    }
 
-      // Keyboard shortcut: Shift+H for Hub
-      document.addEventListener('keydown', (e) => {
-        if (e.shiftKey && e.key === 'H' && !e.ctrlKey && !e.altKey) {
-          document.getElementById('btn-hub').click();
-        }
-      });
+    micBtn.onclick = toggleMic;
 
-      // Fetch WS_PORT from commander_api config, then connect
-      (async () => {
-        try {
-          const cfgRes = await fetch(COMMANDER_API + '/api/ego-gate-config');
-          if (cfgRes.ok) {
-            const cfg = await cfgRes.json();
-            if (cfg.ws_port) WS_PORT = cfg.ws_port;
-          }
-        } catch (_) { /* fallback to default 8080 */ }
-        connect();
-      })();
-    })();
+    // Keyboard PTT (Space) or Toggle (optional)
+    window.onkeydown = (e) => {
+      if (e.key === '/' && document.activeElement !== commandInput) {
+        e.preventDefault();
+        commandInput.focus();
+      }
+      if (e.code === 'Space' && document.activeElement !== commandInput) {
+        if (!isRecording) toggleMic();
+      }
+    };
+    window.onkeyup = (e) => {
+      // For Toggle Mode, we don't necessarily stop on keyup, 
+      // but if the user expects PTT, they'd want it to stop.
+      // Given the request "Toggle Mode", ignoring keyup might be safer 
+      // OR we support both. Let's stick to Toggle for now as requested.
+    };
+
+    window.handleTask = (id, cat) => {
+      if (ws && ws.readyState === 1) {
+        if (cat === 'user_decision') ws.send(JSON.stringify({ type: 'task_approve', task_id: id }));
+        else if (cat === 'ego_running') ws.send(JSON.stringify({ type: 'task_stop', task_id: id }));
+        else if (cat === 'user_running') ws.send(JSON.stringify({ type: 'task_complete', task_id: id }));
+        else ws.send(JSON.stringify({ type: 'task_execute', task_id: id }));
+        showToast('SEND_COMMAND: ' + id);
+      }
+    };
+
+    // Electron Controls
+    try {
+      const { ipcRenderer } = window.require('electron');
+      document.getElementById('min-btn').onclick = () => ipcRenderer.send('minimize-window');
+      document.getElementById('max-btn').onclick = () => ipcRenderer.send('maximize-window');
+      document.getElementById('close-btn').onclick = () => window.close();
+    } catch (e) { }
+
+    // Polling Metrics
+    setInterval(() => {
+      fetch('http://localhost:8000/metrics').then(r => r.json()).then(m => {
+        setStateValue('val-cpu', m.cpu_percent + '%');
+        setStateValue('val-mem', m.memory_percent + '%');
+      }).catch(e => { });
+    }, 5000);
   </script>
 </body>
 

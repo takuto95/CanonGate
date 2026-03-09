@@ -4,13 +4,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Alter-Ego Mascot (LiveMode)</title>
+    <title>Canon Mascot (LiveMode)</title>
     <style>
         :root {
-            --primary: #00ddee;
-            --accent: #ff00ff;
-            --bg-glass: rgba(0, 20, 40, 0.7);
-            --border: rgba(0, 221, 238, 0.3);
+            --primary: #c084fc;
+            /* Soft purple */
+            --accent: #f472b6;
+            /* Pink */
+            --bg-glass: rgba(15, 23, 42, 0.85);
+            /* Deeper gray-blue glass */
+            --border: rgba(192, 132, 252, 0.4);
             --font: 'Outfit', 'Segoe UI', sans-serif;
         }
 
@@ -138,8 +141,107 @@
             font-size: 13px;
             color: #fff;
             max-width: 85%;
+        }
+
+        #hud-content {
+            position: fixed;
+            top: 45px;
+            right: 15px;
+            width: 240px;
+            max-height: 280px;
+            overflow-y: auto;
+            border: 1px solid var(--border);
+            background: var(--bg-glass);
+            backdrop-filter: blur(16px);
+            border-radius: 14px;
+            z-index: 1000;
+            font-size: 12px;
+            color: #f1f5f9;
+            pointer-events: auto;
+            -webkit-app-region: no-drag;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);
+        }
+
+        #hud-content::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        #hud-content::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+        }
+
+        #hud-content:hover {
+            box-shadow: 0 0 15px var(--border);
+            transform: scale(1.02);
+        }
+
+        .task-item {
+            padding: 10px 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
             animation: slideIn 0.3s ease-out;
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .task-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .task-item.user_decision {
+            border-left: 3px solid #fbbf24;
+            color: #fde047;
+        }
+
+        .task-item.ego_running {
+            border-left: 3px solid #22d3ee;
+            color: #67e8f9;
+        }
+
+        .task-item.user_running {
+            border-left: 3px solid #f8fafc;
+            color: #f8fafc;
+        }
+
+        .task-item.needs_org {
+            color: #aaa;
+            font-style: italic;
+        }
+
+        .hud-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background: rgba(0, 0, 0, 0.3);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--primary);
+            letter-spacing: 0.5px;
+        }
+
+        .refresh-btn {
+            background: rgba(192, 132, 252, 0.1);
+            border: 1px solid rgba(192, 132, 252, 0.2);
+            color: var(--primary);
+            cursor: pointer;
+            border-radius: 4px;
+            padding: 2px 4px;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .refresh-btn:hover {
+            background: rgba(192, 132, 252, 0.2);
+            transform: rotate(90deg);
+        }
+
+        .refresh-btn:active {
+            transform: scale(0.9);
         }
 
         @keyframes slideIn {
@@ -217,16 +319,19 @@
 
 <body>
     <div id="start-prompt">
-        <div style="font-size: 20px;">Alter-Ego Mascot</div>
+        <div style="font-size: 20px;">Canon Mascot</div>
         <div style="font-size: 12px; opacity: 0.8; margin-top: 5px;">音声連携を開始するにはボタンを押してください</div>
-        <button id="start-btn">マスコットを起動</button>
+        <button id="start-btn">カノンを起動</button>
     </div>
 
     <!-- System Cockpit HUD -->
     <div id="system-status-bar">
         <div class="status-dot"></div>
-        <span id="status-text">Alter-Ego Core: Online | Mode: Mascot</span>
+        <span id="status-text">Canon Core: Online | Mode: Mascot</span>
         <div style="flex:1"></div>
+        <button id="audio-toggle-btn"
+            style="background:none; border: 1px solid var(--primary); color:var(--primary); font-size:9px; padding:2px 6px; cursor:pointer;-webkit-app-region:no-drag; border-radius:4px; margin-right:5px;">🔊
+            ON</button>
         <button id="mode-switch-btn"
             style="background:none; border: 1px solid var(--primary); color:var(--primary); font-size:9px; padding:2px 6px; cursor:pointer;-webkit-app-region:no-drag; border-radius:4px; margin-right:10px;">➔
             Simple Mode</button>
@@ -240,6 +345,15 @@
 
     <!-- UI Overlay (Bottom) -->
     <div id="ui-overlay" style="display:none">Waiting for Brain...</div>
+
+    <!-- System Cockpit HUD -->
+    <!-- System Cockpit HUD (Hidden as redundant with main dashboard) -->
+    <div id="hud-content" style="display: none;">
+        <div class="hud-header">
+            <span>TASK RADAR 🛰️</span>
+        </div>
+        <div id="task-list"></div>
+    </div>
 
     <!-- Chat Log UI -->
     <div id="chat-container" class="glass-panel">
@@ -279,6 +393,7 @@
         let mouthOpen = 0.0;
         let ws = null;
         let currentEmotion = 'neutral';
+        let isAudioMuted = false;
 
         // --- UI Elements ---
         const chatContainer = document.getElementById('chat-container');
@@ -303,12 +418,36 @@
 
         async function playAudio(base64Data) {
             setupWebAudio();
-            if (audioCtx_playback && audioCtx_playback.state === 'suspended') {
-                await audioCtx_playback.resume();
+            if (isAudioMuted) {
+                console.log("Audio is muted, skipping playback.");
+                return;
+            }
+            // P0: Queueing to prevent duplicated/overlapping voices from multiple fragments
+            audioQueue.push(base64Data);
+            if (!isAudioPlaying) {
+                processAudioQueue();
+            }
+        }
+
+        async function processAudioQueue() {
+            if (audioQueue.length === 0) {
+                isAudioPlaying = false;
+                return;
             }
 
+            isAudioPlaying = true;
+            const base64Data = audioQueue.shift();
+
             try {
-                const binaryString = window.atob(base64Data);
+                // Determine format
+                let binaryString;
+                try {
+                    binaryString = window.atob(base64Data);
+                } catch (e) {
+                    // Fallback for some base64 formats
+                    binaryString = window.atob(base64Data.split(',')[1] || base64Data);
+                }
+
                 const len = binaryString.length;
                 const bytes = new Uint8Array(len);
                 for (let i = 0; i < len; i++) {
@@ -322,9 +461,15 @@
                 source.connect(audioAnalyzer_playback);
                 audioAnalyzer_playback.connect(audioCtx_playback.destination);
 
+                source.onended = () => {
+                    processAudioQueue();
+                };
+
                 source.start(0);
             } catch (e) {
                 console.error("Audio Playback Error", e);
+                isAudioPlaying = false;
+                setTimeout(processAudioQueue, 500); // Backoff and retry next
             }
         }
 
@@ -350,6 +495,20 @@
             while (chatContainer.children.length > 20) chatContainer.removeChild(chatContainer.firstChild);
         }
 
+        function renderTasks(tasks) {
+            const list = document.getElementById('task-list');
+            if (!list) return;
+            list.innerHTML = '';
+            tasks.forEach(t => {
+                const item = document.createElement('div');
+                item.className = `task-item ${t.category || ''}`;
+                item.innerHTML = `
+                    <div style="font-weight:600; font-size: 11px; line-height:1.2;">${t.title}</div>
+                `;
+                list.appendChild(item);
+            });
+        }
+
         const sendText = () => {
             const text = inputField.value.trim();
             if (text && ws && ws.readyState === WebSocket.OPEN) {
@@ -367,23 +526,18 @@
 
         function setupWebSocket() {
             const wsHost = (window.location.protocol === 'file:') ? 'localhost' : window.location.hostname;
-            ws = new WebSocket('ws://' + wsHost + ':8080');
+            ws = new WebSocket('ws://' + wsHost + ':8082');
 
             ws.onopen = () => {
-                console.log('Connected to Alter-Ego Brain');
-                document.getElementById('ui-overlay').textContent = 'Connected: Brain Online';
-                document.getElementById('ui-overlay').style.color = '#00ff00';
+                console.log('Connected to Canon Brain');
+                const overlay = document.getElementById('ui-overlay');
+                if (overlay) { overlay.textContent = 'Connected: Brain Online'; overlay.style.color = '#c084fc'; }
             };
 
             ws.onmessage = (event) => {
                 try {
                     const msg = JSON.parse(event.data);
                     if (msg.type === 'user_text') {
-                        // User voice text or echo
-                        // Avoid duplicates if we handled it in sendText, but python echoes voice too
-                        // Let's just allow it for now or dedupe logic if needed
-                        // For voice input, we need this. For text input, we added it optimistically.
-                        // Simple check: if last log is same, maybe skip? But let's keep it simple.
                         addLog(msg.text, 'user');
                     }
                     else if (msg.type === 'audio') {
@@ -395,13 +549,23 @@
                         }
                     }
                     else if (msg.type === 'hub_alert') {
-                        showHubToast(msg.tag, msg.text);
+                        const tag = msg.tag;
+                        const text = msg.text;
+                        if (tag === "[PATROL]" || tag === "[SYSTEM_REPORT]" || tag === "[ALIVE_ISSUE]") {
+                            currentEmotion = 'patrol';
+                            setTimeout(() => { currentEmotion = 'neutral'; }, 10000);
+                        }
+                        showHubToast(tag, text);
+                    }
+                    else if (msg.type === 'tasks') {
+                        renderTasks(msg.tasks);
                     }
                 } catch (e) { console.error('WS Error:', e); }
             };
 
             const toast = document.getElementById('hub-toast');
             function showHubToast(tag, text) {
+                if (!toast) return;
                 const iconMap = {
                     "[URGENT]": "🚨",
                     "[SLACK]": "📬",
@@ -409,7 +573,9 @@
                     "[DEVIN]": "🤖",
                     "[ALERT]": "⚠️",
                     "[FINANCE]": "💰",
-                    "[SYSTEM_REPORT]": "📊"
+                    "[SYSTEM_REPORT]": "📊",
+                    "[PATROL]": "🔍",
+                    "[ALIVE_ISSUE]": "🧠"
                 };
                 toast.querySelector('.icon').textContent = iconMap[tag] || "🔔";
                 toast.querySelector('.content').textContent = text;
@@ -419,14 +585,14 @@
 
             ws.onclose = () => {
                 console.log('Disconnected');
-                document.getElementById('ui-overlay').textContent = 'Disconnected: Waiting for Brain...';
-                document.getElementById('ui-overlay').style.color = 'red';
+                const overlay = document.getElementById('ui-overlay');
+                if (overlay) { overlay.textContent = 'Disconnected: Waiting for Brain...'; overlay.style.color = 'red'; }
                 setTimeout(setupWebSocket, 2000);
             };
         }
 
         // --- Three.js Setup ---
-        const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+        const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setClearColor(0x000000, 0);
         renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -434,8 +600,8 @@
 
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(25, window.innerWidth / window.innerHeight, 0.1, 20.0);
-        camera.position.set(0.0, 1.4, 1.5);
-        camera.lookAt(0, 1.35, 0);
+        camera.position.set(0.0, 1.0, 1.8);
+        camera.lookAt(0, 0.9, 0);
 
         const light = new THREE.DirectionalLight(0xffffff, 0.8);
         light.position.set(1, 1, 1).normalize();
@@ -443,7 +609,7 @@
         scene.add(new THREE.AmbientLight(0xffffff, 0.5));
 
         const loader = new GLTFLoader();
-        loader.register((parser) => new VRMLoaderPlugin(parser, { autoUpdateHumanBond: true }));
+        loader.register((parser) => new VRMLoaderPlugin(parser, { autoUpdateHumanoid: true }));
 
         function loadVRM(url) {
             loader.load(url, (gltf) => {
@@ -456,16 +622,11 @@
                     scene.remove(currentVrm.scene);
                     VRMUtils.deepDispose(currentVrm.scene);
                 }
-                vrm.scene.rotation.y = Math.PI;
+                // Fix orientation (remove PI rotation)
+                vrm.scene.rotation.y = 0;
+                // Move camera down slightly if needed, but let's just use default pose
                 scene.add(vrm.scene);
                 currentVrm = vrm;
-
-                try {
-                    const lArm = vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
-                    const rArm = vrm.humanoid.getNormalizedBoneNode('rightUpperArm');
-                    if (lArm) lArm.rotation.z = Math.PI / 2.5;
-                    if (rArm) rArm.rotation.z = -Math.PI / 2.5;
-                } catch (e) { console.warn(e); }
                 console.log('VRM Loaded');
             }, undefined, (err) => {
                 console.error('VRM load failed:', err);
@@ -473,13 +634,41 @@
             });
         }
 
-        // Interactions
-        document.getElementById('start-btn').addEventListener('click', () => {
-            setupWebAudio();
-            setupWebSocket();
-            document.getElementById('start-prompt').style.display = 'none';
-            loadVRM('./test.vrm');
-        });
+        // Interactions / Auto-Start
+        const startPrompt = document.getElementById('start-prompt');
+        // Hide prompt if inside iframe
+        if (window.parent !== window) {
+            startPrompt.style.display = 'none';
+            // Phase 4.1: Hide standalone Mascot UI elements because they overlap with the main HUD
+            const hideIds = ['system-status-bar', 'hub-toast', 'chat-container', 'input-area', 'controls'];
+            hideIds.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.style.display = 'none';
+            });
+
+            // Start automatically
+            setTimeout(() => {
+                setupWebAudio();
+                setupWebSocket();
+                loadVRM('./test.vrm');
+            }, 500);
+
+            // Listen for click from parent to resume audio
+            window.addEventListener('message', (event) => {
+                if (event.data && event.data.type === 'resume_audio') {
+                    if (audioCtx_playback && audioCtx_playback.state === 'suspended') {
+                        audioCtx_playback.resume();
+                    }
+                }
+            });
+        } else {
+            document.getElementById('start-btn').addEventListener('click', () => {
+                setupWebAudio();
+                setupWebSocket();
+                startPrompt.style.display = 'none';
+                loadVRM('./test.vrm');
+            });
+        }
 
         // Drag Rotate
         let isDragging = false;
@@ -512,13 +701,53 @@
                 try {
                     currentVrm.update(delta);
 
+                    const neck = currentVrm.humanoid.getNormalizedBoneNode('neck');
+                    const spine = currentVrm.humanoid.getNormalizedBoneNode('spine');
+                    if (spine) spine.rotation.x = Math.sin(elapsed * 1.5) * 0.02;
+
+                    // Idle & Gesture Posing
+                    const humanoid = currentVrm.humanoid;
+                    const leftUpperArm = humanoid.getNormalizedBoneNode('leftUpperArm');
+                    const rightUpperArm = humanoid.getNormalizedBoneNode('rightUpperArm');
+
+                    const vol = getPlaybackVolume();
+                    const mouthVal = Math.min(1.0, vol / 30.0);
+
+                    if (leftUpperArm) {
+                        // Default Down (-1.35), Sway (+/- 0.03), Gesture during talk (mouthVal)
+                        leftUpperArm.rotation.z = -1.35 + Math.sin(elapsed * 0.8) * 0.03 + (mouthVal * 0.2);
+                        leftUpperArm.rotation.x = (mouthVal * 0.4);
+                    }
+                    if (rightUpperArm) {
+                        // Default Down (1.35), Sway (+/- 0.03), Gesture during talk (mouthVal)
+                        rightUpperArm.rotation.z = 1.35 - Math.sin(elapsed * 0.8) * 0.03 - (mouthVal * 0.2);
+                        rightUpperArm.rotation.x = (mouthVal * 0.4);
+                    }
+
+                    // Add Left/Right Forearm and Hands to prevent straight line arms
+                    const leftLowerArm = humanoid.getNormalizedBoneNode('leftLowerArm');
+                    const rightLowerArm = humanoid.getNormalizedBoneNode('rightLowerArm');
+                    if (leftLowerArm) leftLowerArm.rotation.y = 0.4;
+                    if (rightLowerArm) rightLowerArm.rotation.y = -0.4;
+
+                    // Leg alignment
+                    const leftLowerLeg = currentVrm.humanoid.getNormalizedBoneNode('leftLowerLeg');
+                    const rightLowerLeg = currentVrm.humanoid.getNormalizedBoneNode('rightLowerLeg');
+                    if (leftLowerLeg) leftLowerLeg.rotation.x = -0.1;
+                    if (rightLowerLeg) rightLowerLeg.rotation.x = -0.1;
+
+                    // Dynamic Animation based on AI state
                     if (currentEmotion === 'happy') {
                         targetConfirm = 1.0; targetSorrow = 0.0;
                         targetTilt = Math.sin(elapsed * 3.0) * 0.05; targetJump = Math.abs(Math.sin(elapsed * 5.0) * 0.1);
                     } else if (currentEmotion === 'sad') {
                         targetConfirm = 0.0; targetSorrow = 1.0; targetTilt = 0.0; targetJump = 0.0;
+                    } else if (currentEmotion === 'patrol') {
+                        // Kyorokyoro (looking around)
+                        targetTilt = Math.sin(elapsed * 1.0) * 0.1;
+                        if (neck) neck.rotation.y = Math.sin(elapsed * 2.0) * 0.2;
                     } else if (currentEmotion === 'question') {
-                        targetConfirm = 0.0; targetSorrow = 0.0; targetTilt = 0.15; targetLean = 0.3;
+                        targetTilt = 0.15; targetLean = 0.3;
                     } else {
                         targetConfirm = 0.0; targetSorrow = 0.0; targetTilt = 0.0; targetJump = 0.0; targetLean = 0.0;
                     }
@@ -540,12 +769,7 @@
                     currentVrm.scene.position.y = currentJump;
                     currentVrm.scene.position.z = currentLean;
 
-                    const neck = currentVrm.humanoid.getNormalizedBoneNode('neck');
-                    const spine = currentVrm.humanoid.getNormalizedBoneNode('spine');
-                    if (spine) spine.rotation.x = Math.sin(elapsed * 1.5) * 0.02;
-
-                    const vol = getPlaybackVolume();
-                    const mouthVal = Math.min(1.0, vol / 30.0);
+                    // Use existing mouthVal calculated above
                     em.setValue('aa', mouthVal);
 
                     if (neck) {
@@ -587,6 +811,22 @@
         } catch (e) {
             console.log('Not running in Electron or require failed:', e);
             minBtn.style.display = 'none';
+        }
+
+        // --- Audio Toggle Logic ---
+        const audioBtn = document.getElementById('audio-toggle-btn');
+        if (audioBtn) {
+            audioBtn.addEventListener('click', () => {
+                isAudioMuted = !isAudioMuted;
+                audioBtn.textContent = isAudioMuted ? '🔇 OFF' : '🔊 ON';
+                audioBtn.style.borderColor = isAudioMuted ? '#ef4444' : 'var(--primary)';
+                audioBtn.style.color = isAudioMuted ? '#ef4444' : 'var(--primary)';
+
+                if (isAudioMuted && audioCtx_playback) {
+                    // Optional: Stop current playing audio immediately if muted
+                    // (Implementation depends on if we want to kill current buffer source)
+                }
+            });
         }
 
     </script>

@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎸 カノン ギター相棒 (Guitar Buddy)</title>
+    <!-- pdf.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --accent: #ff6b81;
+            --bg: #1a1a2e;
+            --panel: rgba(255, 255, 255, 0.1);
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg);
+            color: white;
+            font-family: 'M PLUS Rounded 1c', sans-serif;
+            overflow: hidden;
+            /* Prevent body scroll, we'll scroll the container */
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        header {
+            padding: 10px 20px;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 100;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+        }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .btn {
+            background: var(--accent);
+            border: none;
+            color: white;
+            padding: 8px 15px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: transform 0.1s;
+        }
+
+        .btn:active {
+            transform: scale(0.95);
+        }
+
+        .btn.secondary {
+            background: #555;
+        }
+
+        #viewer-container {
+            flex-grow: 1;
+            overflow-y: auto;
+            position: relative;
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+        }
+
+        #viewer-container::-webkit-scrollbar {
+            display: none;
+        }
+
+        #canvas-wrapper {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        canvas {
+            max-width: 95%;
+            margin-bottom: 20px;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
+            border-radius: 5px;
+        }
+
+        .hud {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background: var(--panel);
+            backdrop-filter: blur(10px);
+            padding: 10px 15px;
+            border-radius: 15px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            z-index: 1000;
+        }
+
+        .beat-dot {
+            display: inline-block;
+            width: 15px;
+            height: 15px;
+            background: #444;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+
+        .beat-dot.active {
+            background: var(--accent);
+            box-shadow: 0 0 10px var(--accent);
+        }
+
+        #bpm-display {
+            font-size: 1.2rem;
+            color: var(--accent);
+        }
+
+        .canon-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9rem;
+        }
+
+        .canon-badge img {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+        }
+
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="loading" class="loading-overlay">🎸 譜面を読み込み中... (Canon Buddy)</div>
+
+    <header>
+        <div class="canon-badge">
+            <!-- Image placeholder, will try to load if exists -->
+            <div
+                style="width:30px; height:30px; background:var(--accent); border-radius:50%; display:flex; justify:center; align:center">
+                C</div>
+            <span>カノンと猛練習モード！</span>
+        </div>
+        <div class="controls">
+            <div>BPM: <input type="range" id="bpm-slider" min="40" max="220" value="95"> <span
+                    id="bpm-display">95</span></div>
+            <button id="scroll-toggle" class="btn">▶ START</button>
+            <button id="reset-btn" class="btn secondary">RESET</button>
+        </div>
+    </header>
+
+    <div id="viewer-container">
+        <div id="canvas-wrapper"></div>
+    </div>
+
+    <div class="hud">
+        <div>
+            <span class="beat-dot" id="dot-1"></span>
+            <span class="beat-dot" id="dot-2"></span>
+            <span class="beat-dot" id="dot-3"></span>
+            <span class="beat-dot" id="dot-4"></span>
+        </div>
+        <div id="status-text" style="font-size: 0.8rem; margin-top: 5px; opacity: 0.7;">Canon Connected</div>
+    </div>
+
+    <script>
+        const pdfWorkerUrl = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+
+        let pdfDoc = null;
+        let isScrolling = false;
+        let bpm = 95;
+        let scrollSpeed = 0; // pixels per frame
+        let lastTimestamp = 0;
+        const container = document.getElementById('viewer-container');
+        const wrapper = document.getElementById('canvas-wrapper');
+        const bpmSlider = document.getElementById('bpm-slider');
+        const bpmDisplay = document.getElementById('bpm-display');
+        const scrollBtn = document.getElementById('scroll-toggle');
+        const resetBtn = document.getElementById('reset-btn');
+
+        let audioCtx = null;
+        let nextBeatTime = 0;
+        let beatCount = 0;
+        const lookahead = 25.0; // ms
+        const scheduleAheadTime = 0.1; // sec
+
+        // WebSocket to Canon
+        let ws = null;
+        function connectWS() {
+            const host = window.location.hostname || 'localhost';
+            ws = new WebSocket(`ws://${host}:8082`);
+            ws.onopen = () => {
+                document.getElementById('status-text').innerText = 'カノンと同期中...';
+                ws.send(json.stringify({ type: 'log', message: 'ギター練習モードを起動したよ！マリーゴールドを頑張ろうね。', voice: true }));
+            };
+            ws.onclose = () => {
+                document.getElementById('status-text').innerText = 'OFFLINE (Canon disconnected)';
+                setTimeout(connectWS, 3000);
+            };
+        }
+
+        function json(obj) { return JSON.stringify(obj); }
+
+        // PDF Loading
+        async function loadPDF() {
+            try {
+                // Try score.pdf in the same dir
+                pdfDoc = await pdfjsLib.getDocument('score.pdf').promise;
+                for (let i = 1; i <= pdfDoc.numPages; i++) {
+                    const page = await pdfDoc.getPage(i);
+                    const viewport = page.getViewport({ scale: 2 });
+                    const canvas = document.createElement('canvas');
+                    const context = canvas.getContext('2d');
+                    canvas.height = viewport.height;
+                    canvas.width = viewport.width;
+                    await page.render({ canvasContext: context, viewport }).promise;
+                    wrapper.appendChild(canvas);
+                }
+                document.getElementById('loading').style.display = 'none';
+                calibrateSpeed();
+            } catch (err) {
+                console.error(err);
+                document.getElementById('loading').innerText = '❌ 譜面 (score.pdf) が見つからないよ。フォルダを確認してね。';
+            }
+        }
+
+        function calibrateSpeed() {
+            // Estimate speed based on BPM. This is a heuristic.
+            // 4 beats (~1 measure) is roughly 25% of a page height? 
+            // In a typical guitar score (6 lines per page), 1 line = ~4 measures.
+            // Let's assume 1 page = 24 measures. 1 measure = height / 24.
+            const totalHeight = wrapper.offsetHeight;
+            const measuresPerPage = 24; // Average
+            const pixelsPerMeasure = (totalHeight / pdfDoc.numPages) / measuresPerPage;
+
+            // Speed = (BPM / 4) * pixelsPerMeasure / 60 seconds / 60 fps
+            scrollSpeed = (bpm / 4) * pixelsPerMeasure / (60 * 60);
+        }
+
+        // Metronome logic
+        function scheduler() {
+            while (nextBeatTime < audioCtx.currentTime + scheduleAheadTime) {
+                playBeat(nextBeatTime);
+                nextTick();
+            }
+        }
+
+        function nextTick() {
+            const secondsPerBeat = 60.0 / bpm;
+            nextBeatTime += secondsPerBeat;
+            beatCount = (beatCount % 4) + 1;
+        }
+
+        function playBeat(time) {
+            const osc = audioCtx.createOscillator();
+            const envelope = audioCtx.createGain();
+
+            osc.frequency.value = (beatCount === 1) ? 880 : 440;
+            envelope.gain.value = 1;
+            envelope.gain.exponentialRampToValueAtTime(0.001, time + 0.1);
+
+            osc.connect(envelope);
+            envelope.connect(audioCtx.destination);
+
+            osc.start(time);
+            osc.stop(time + 0.1);
+
+            // Visual update (use setTimeout for visual sync, though not perfect)
+            setTimeout(() => {
+                document.querySelectorAll('.beat-dot').forEach(d => d.classList.remove('active'));
+                document.getElementById(`dot-${beatCount}`).classList.add('active');
+            }, (time - audioCtx.currentTime) * 1000);
+        }
+
+        function scrollLoop(timestamp) {
+            if (!isScrolling) return;
+
+            if (lastTimestamp) {
+                const diff = timestamp - lastTimestamp;
+                // scroll amount proportional to BPM
+                // Adjust calibration: 1 page usually covers 16-24 measures.
+                // 1 measure = approx 200px at scale=2.
+                // Scroll px per ms = (bpm / 60 / 4) * 200 / 1000?
+                const pxPerMs = (bpm / 60 / 4) * 350 / 1000;
+                container.scrollBy(0, pxPerMs * diff);
+            }
+            lastTimestamp = timestamp;
+            scheduler();
+            requestAnimationFrame(scrollLoop);
+        }
+
+        scrollBtn.onclick = () => {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+            isScrolling = !isScrolling;
+            if (isScrolling) {
+                scrollBtn.innerText = '⏸ PAUSE';
+                scrollBtn.classList.add('secondary');
+                lastTimestamp = 0;
+                nextBeatTime = audioCtx.currentTime;
+                beatCount = 0;
+                requestAnimationFrame(scrollLoop);
+                ws?.send(json({ type: 'log', message: `マリーゴールドの練習を開始したよ！BPMは${bpm}に設定中。`, voice: true }));
+            } else {
+                scrollBtn.innerText = '▶ START';
+                scrollBtn.classList.remove('secondary');
+                ws?.send(json({ type: 'log', message: '練習を一時中断したよ。休憩かな？', voice: true }));
+            }
+        };
+
+        resetBtn.onclick = () => {
+            container.scrollTo(0, 0);
+            if (isScrolling) scrollBtn.click();
+            beatCount = 0;
+            document.querySelectorAll('.beat-dot').forEach(d => d.classList.remove('active'));
+        };
+
+        bpmSlider.oninput = () => {
+            bpm = parseInt(bpmSlider.value);
+            bpmDisplay.innerText = bpm;
+            calibrateSpeed();
+        };
+
+        // Init
+        loadPDF();
+        connectWS();
+
+    </script>
+</body>
+
+</html>

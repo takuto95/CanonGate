@@ -15,35 +15,22 @@ app.commandLine.appendSwitch('disable-gpu');
 
 let pythonProcess = null;
 let mainWin = null;
-let currentMode = 'simple'; // 'mascot' or 'simple'
-
-function setWindowMode(mode) {
+// Simplified load logic (Simple Mode only)
+function loadSimpleMode() {
     if (!mainWin) return;
-    currentMode = mode;
-
-    if (mode === 'mascot') {
-        mainWin.setSize(400, 600);
-        mainWin.setResizable(true);
-        // Mascot mode is usually centered or bottom right
-        mainWin.loadFile(path.join(__dirname, 'mascot-web', 'index.html'));
-    } else {
-        // Simple Mode (Cockpit) is wider and taller. Pass ?domain=tech so HUB shows work tasks only.
-        mainWin.setSize(900, 850);
-        mainWin.setResizable(true);
-        const domain = getDomainFromArgv();
-        const filePath = path.join(__dirname, 'simple-mode-desktop', 'index.html');
-        const fileUrl = pathToFileURL(filePath).href;
-        mainWin.loadURL(domain ? `${fileUrl}?domain=${encodeURIComponent(domain)}` : fileUrl);
-    }
+    const domain = getDomainFromArgv();
+    const filePath = path.join(__dirname, 'simple-mode-desktop', 'index.html');
+    const fileUrl = pathToFileURL(filePath).href;
+    mainWin.loadURL(domain ? `${fileUrl}?domain=${encodeURIComponent(domain)}` : fileUrl);
 }
 
 function createWindow() {
     const { width, height } = screen.getPrimaryDisplay().workAreaSize;
 
     mainWin = new BrowserWindow({
-        width: 900,
+        width: 1200,
         height: 850,
-        x: Math.round((width - 900) / 2),
+        x: Math.round((width - 1200) / 2),
         y: Math.round((height - 850) / 2),
         frame: false,
         transparent: true,
@@ -78,12 +65,8 @@ function createWindow() {
         }
     });
 
-    ipcMain.on('change-mode', (event, mode) => {
-        setWindowMode(mode);
-    });
-
-    // Start with default mode
-    setWindowMode('simple');
+    // Start Simple Mode UI
+    loadSimpleMode();
 
     // Start Python Backend (The Brain)
     console.log('[Electron] Starting Python Backend...');
@@ -97,7 +80,8 @@ function createWindow() {
 
     pythonProcess = spawn('python', args, {
         cwd: __dirname,
-        stdio: 'inherit'
+        stdio: 'inherit',
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' }
     });
 
     pythonProcess.on('error', (err) => {

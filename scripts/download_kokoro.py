@@ -32,7 +32,7 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 BASE_DIR = SCRIPT_DIR.parent
 
 # Voices URL: Download voices.bin (binary format required by kokoro-onnx)
-VOICES_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/v0.1.0/voices-v1.0.bin"
+VOICES_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
 # Model URL: INT8 Quantized model
 MODEL_URL = "https://huggingface.co/NeuML/kokoro-int8-onnx/resolve/main/model.onnx"
 

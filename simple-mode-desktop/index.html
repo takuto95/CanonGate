@@ -73,7 +73,7 @@
         </div>
       </main>
 
-      <!-- Right: Mission/Task Dash -->
+      <!-- Right: Mission/Task Dash (toggleable) -->
       <aside class="hud-wing right-wing">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
           <div style="font-size: 10px; opacity: 0.5; letter-spacing: 2px;">MISSION_RADAR</div>
@@ -82,31 +82,18 @@
             <button class="filter-btn" id="btn-work" onclick="setWorkFilter(true)">仕事</button>
             <button id="sync-btn" onclick="syncTasks()" title="SYNC_BRAIN"
               style="background:none; border:none; color:var(--neon-cyan); cursor:pointer; font-size:12px; opacity:0.6; padding:0; display:flex; align-items:center; transition: all 0.2s;">🔄</button>
+            <button id="task-panel-close-btn" onclick="toggleTaskPanel(false)" title="パネルを閉じる"
+              style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:14px; padding:0 4px; line-height:1;">◀</button>
           </div>
         </div>
+        <div class="task-panel-inner">
         <div id="taskDash" style="flex: 1; display: flex; flex-direction: column; gap: 12px; overflow-y: auto;">
-          <div class="dash-category">
-            <div class="dash-category-header">判断 <span>DECISION</span></div>
-            <div id="dash-user_decision"></div>
-          </div>
-          <div class="dash-category">
-            <div class="dash-category-header">提案 <span>PROPOSAL</span></div>
-            <div id="dash-ego_proposal"></div>
-          </div>
-          <div class="dash-category">
-            <div class="dash-category-header">実行中 (Ego) <span>EGO_RUNNING</span></div>
-            <div id="dash-ego_running"></div>
-          </div>
-          <div class="dash-category">
-            <div class="dash-category-header">実行中 (User) <span>USER_RUNNING</span></div>
-            <div id="dash-user_running"></div>
-          </div>
-          <div class="dash-category">
-            <div class="dash-category-header">要整理 <span>NEEDS_ORG</span></div>
-            <div id="dash-needs_org"></div>
-          </div>
+          <div id="taskDashContent"></div>
+        </div>
         </div>
       </aside>
+      <!-- Tab to open panel when closed -->
+      <button type="button" class="task-panel-tab" id="task-panel-tab" onclick="toggleTaskPanel(true)" aria-label="タスクパネルを開く">MISSION</button>
     </div>
 
     <div id="toast" class="toast">NOTIFICATION</div>
@@ -120,6 +107,16 @@
     const thoughtStream = document.getElementById('thoughtStream');
     const taskDash = document.getElementById('taskDash');
     const toast = document.getElementById('toast');
+    const hudMainLayout = document.querySelector('.hud-main-layout');
+
+    // Default: task panel closed (hidden). Open = full-window task view.
+    if (hudMainLayout) hudMainLayout.classList.add('task-panel-closed');
+
+    function toggleTaskPanel(open) {
+      if (!hudMainLayout) return;
+      if (open) hudMainLayout.classList.remove('task-panel-closed');
+      else hudMainLayout.classList.add('task-panel-closed');
+    }
 
     function showToast(txt) {
       toast.textContent = txt;
@@ -180,45 +177,64 @@
     }
 
     let lastTasks = [];
+    function escapeHtml(s) {
+      if (s == null) return '';
+      const div = document.createElement('div');
+      div.textContent = s;
+      return div.innerHTML;
+    }
+    function getPhaseLabel(c) {
+      return c === 'ego_proposal' ? '実行前' : (c === 'user_decision' ? '判断' : (c === 'ego_running' ? '実行中(E)' : (c === 'user_running' ? '実行中(U)' : '要整理')));
+    }
     function renderTasks(tasks) {
       lastTasks = tasks;
-      const categories = ['user_decision', 'ego_proposal', 'ego_running', 'user_running', 'needs_org'];
-      categories.forEach(c => {
-        const container = document.getElementById('dash-' + c);
-        if (!container) return;
+      const container = document.getElementById('taskDashContent');
+      if (!container) return;
 
-        const filtered = tasks.filter(t => {
-          const catMatch = t.category === c;
-          const workMatch = workMode ? t.is_work : !t.is_work;
-          return catMatch && workMatch;
+      const filtered = tasks.filter(t => (workMode ? t.is_work : !t.is_work));
+      const byProject = {};
+      filtered.forEach(t => {
+        const p = (t.project && t.project.trim()) ? t.project.trim() : 'その他';
+        if (!byProject[p]) byProject[p] = [];
+        byProject[p].push(t);
+      });
+      const projectOrder = Object.keys(byProject).sort((a, b) => a.localeCompare(b, 'ja'));
+
+      let html = '';
+      projectOrder.forEach(projectName => {
+        const list = byProject[projectName];
+        html += `<div class="dash-category project-section"><div class="dash-category-header project-header">${escapeHtml(projectName)}</div>`;
+        html += '<table class="task-table"><thead><tr><th class="col-phase">フェーズ</th><th class="col-title">タスク名</th><th class="col-status">タスク済</th><th class="col-cli">CLI</th><th class="col-eval">評価</th></tr></thead><tbody>';
+        list.forEach(t => {
+          const c = t.category;
+          const phaseLabel = getPhaseLabel(c);
+          const taskDone = true;
+          const cliDone = t.cli_executed === true;
+          const cliFailed = t.cli_failed === true;
+          const evalDone = t.evaluated === true || t.folder === 'evaluating';
+          const titleSafe = escapeHtml(t.title);
+          const cliCell = cliDone ? '<span class="task-cell done">○</span>' : (cliFailed ? '<span class="task-cell failed" title="CLI実行で失敗">×</span>' : '<span class="task-cell pending">−</span>');
+          html += `<tr class="dash-row ${c} task-row-clickable" data-task-id="${escapeHtml(t.id)}" data-category="${c}" data-is-work="${t.is_work}">`
+            + `<td class="col-phase">${phaseLabel}</td>`
+            + `<td class="col-title">${titleSafe}</td>`
+            + `<td class="col-status">${taskDone ? '<span class="task-cell done">○</span>' : '<span class="task-cell">−</span>'}</td>`
+            + `<td class="col-cli">${cliCell}</td>`
+            + `<td class="col-eval">${evalDone ? '<span class="task-cell done">○</span>' : '<span class="task-cell pending">−</span>'}</td>`
+            + `</tr>`;
         });
+        html += '</tbody></table></div>';
+      });
+      container.innerHTML = html;
 
-        let html = '';
-        filtered.slice(0, 6).forEach(t => {
-          let btnLabel = 'GO';
-          if (c === 'user_decision') btnLabel = 'OK';
-          if (c === 'ego_running') btnLabel = 'STOP';
-          if (c === 'user_running') btnLabel = 'DONE';
-          if (c === 'needs_org') btnLabel = 'CHECK';
-
-          let title = t.title;
-          // Rename "Before Running" logic (User mentioned if GO is pressed it becomes running)
-          // We assume for now if it's in propuesta, it's "Before Running"
-          const displayLabel = c === 'ego_proposal' ? '実行前' : '';
-
-          html += `<div class="dash-card ${c}">`
-            + `<div style="display:flex; flex-direction:column; flex:1;">`
-            + `<span style="font-size:9px; opacity:0.5;">${displayLabel}</span>`
-            + `<span style="font-size:11px;">${title}</span>`
-            + `</div>`
-            + `<button class="dash-card-btn" onclick="handleTask('${t.id}', '${c}', ${t.is_work})">${btnLabel}</button>`
-            + `</div>`;
+      container.querySelectorAll('.task-row-clickable').forEach(tr => {
+        tr.addEventListener('click', function() {
+          const id = this.getAttribute('data-task-id');
+          const cat = this.getAttribute('data-category');
+          const isWork = this.getAttribute('data-is-work') === 'true';
+          if (id && cat != null) handleTask(id, cat, isWork);
         });
-        container.innerHTML = html;
-        container.parentElement.style.display = filtered.length > 0 ? 'block' : 'none';
       });
 
-      // Pulse avatar if waiting for approval
       if (tasks.some(t => t.category === 'user_decision')) {
         avatarFrame.style.borderColor = '#ff9d00';
         avatarFrame.style.boxShadow = '0 0 15px rgba(255,157,0,0.3)';
@@ -371,27 +387,16 @@
           if (msg.type === 'tasks') renderTasks(msg.tasks);
 
           if (msg.type === 'task_status_change') {
-            const el = document.querySelector(`.dash-card-btn[onclick*="'${msg.task_id}'"]`);
-            if (el) {
-              const card = el.closest('.dash-card');
+            const row = document.querySelector(`.dash-row[data-task-id="${msg.task_id}"]`);
+            if (row) {
               if (msg.status === 'running') {
-                el.textContent = 'RUNNING';
-                el.disabled = true;
-                el.style.background = 'var(--neon-cyan)';
-                el.style.color = '#000';
-                el.style.animation = 'mic-pulse 1.5s infinite';
-                if (card) card.style.borderLeft = '4px solid var(--neon-cyan)';
+                row.style.borderLeft = '4px solid var(--neon-cyan)';
+                row.classList.add('task-running');
               } else if (msg.status === 'completed' || msg.status === 'approved') {
-                el.textContent = '✓ DONE';
-                el.disabled = true;
-                el.style.background = '#0a3';
-                el.style.color = '#fff';
-                if (card) card.style.opacity = '0.5';
+                row.style.opacity = '0.5';
+                row.classList.add('task-done');
               } else if (msg.status === 'stopped') {
-                el.textContent = 'STOPPED';
-                el.disabled = true;
-                el.style.background = '#f44';
-                el.style.color = '#fff';
+                row.classList.add('task-stopped');
               }
             }
             showToast(msg.status.toUpperCase() + ': ' + msg.task_id);

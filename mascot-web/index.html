@@ -622,8 +622,9 @@
                     scene.remove(currentVrm.scene);
                     VRMUtils.deepDispose(currentVrm.scene);
                 }
-                // Auto-Calibration
-                vrm.scene.rotation.y = 0;
+                // Auto-Calibration: VRM default forward is often -Z (Blender/Unity); camera is at +Z.
+                // Rotate 180° around Y so the avatar faces the camera (front).
+                vrm.scene.rotation.y = Math.PI;
                 scene.add(vrm.scene);
                 currentVrm = vrm;
 
@@ -776,10 +777,10 @@
                         );
                     }
 
-                    // Natural Neck Sway
+                    // Natural Neck Sway (bounded; do not use += or rotation accumulates and spins)
                     if (neck) {
-                        neck.rotation.x += Math.sin(elapsed * 0.3) * 0.01 + microJitter.x;
-                        neck.rotation.y += Math.cos(elapsed * 0.2) * 0.01 + microJitter.y;
+                        neck.rotation.x = Math.sin(elapsed * 0.3) * 0.02 + microJitter.x;
+                        neck.rotation.y = Math.cos(elapsed * 0.2) * 0.02 + microJitter.y;
                     }
 
                     // Leg alignment

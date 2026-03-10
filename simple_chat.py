@@ -1067,6 +1067,16 @@ async def file_watcher_task(filename):
 
         await asyncio.sleep(0.5)
 
+
+def _infer_project(title: str) -> str:
+    """タスク名の先頭（-・_の前）をプロジェクト名として返す。life/work 共通。"""
+    if not title or not title.strip():
+        return "その他"
+    import re
+    m = re.match(r"^([^-・_\s]+)", title.strip())
+    return m.group(1) if m else title.strip()[:20] or "その他"
+
+
 async def manual_task_sync():
     """Immediately scans and broadcasts GTD tasks to HUD.
     tech モード = 仕事（work）だけ表示。life モード = 生活（private）だけ表示。
@@ -1094,22 +1104,44 @@ async def manual_task_sync():
                     elif "【要整理】" in title:
                         category = "needs_org"
 
+                    evaluated = (folder == "evaluating")
+                    clean_title = title.replace("【実行中】","").replace("【要整理】","").strip()
+                    # プロジェクト: タイトルの先頭（-・_の前）で一括り。life/work どちらも同じルール。
+                    project = _infer_project(clean_title)
+                    # CLI 成功/失敗 = work_canon_runner のマーカー。成功=<stem>.txt / 失敗=<stem>.failed.txt
+                    marker_dir = BASE_DIR / "logs" / "canon_run_markers"
+                    cli_executed = (marker_dir / f"{f.stem}.txt").exists() if marker_dir.exists() else False
+                    cli_failed = (marker_dir / f"{f.stem}.failed.txt").exists() if marker_dir.exists() else False
                     tasks.append({
                         "id": f.name,
-                        "title": title.replace("【実行中】","").replace("【要整理】","").strip(),
+                        "title": clean_title,
                         "category": category,
-                        "is_work": is_work
+                        "is_work": is_work,
+                        "folder": folder,
+                        "cli_executed": cli_executed,
+                        "cli_failed": cli_failed,
+                        "evaluated": evaluated,
+                        "project": project
                     })
 
     # 協議メモ: tech 時は work/inbox のみ、life 時は従来の inbox
     inbox_for_notes = (gtd_dir / "work" / "inbox") if CURRENT_DOMAIN == "tech" else inbox_dir
     if inbox_for_notes.exists():
         for f in inbox_for_notes.glob("協議メモ-*.md"):
+            stem = f.stem
+            marker_dir = BASE_DIR / "logs" / "canon_run_markers"
+            cli_executed = (marker_dir / f"{stem}.txt").exists() if marker_dir.exists() else False
+            cli_failed = (marker_dir / f"{stem}.failed.txt").exists() if marker_dir.exists() else False
             tasks.append({
                 "id": f.name,
-                "title": f.stem,
+                "title": stem,
                 "category": "user_decision",
-                "is_work": (CURRENT_DOMAIN == "tech")
+                "is_work": (CURRENT_DOMAIN == "tech"),
+                "folder": "inbox",
+                "cli_executed": cli_executed,
+                "cli_failed": cli_failed,
+                "evaluated": False,
+                "project": _infer_project(stem)
             })
 
     await broadcast_ws({"type": "tasks", "tasks": tasks})

@@ -116,6 +116,106 @@ body {
   padding: 20px;
   gap: 20px;
   -webkit-app-region: no-drag;
+  transition: width 0.25s ease, min-width 0.25s ease, padding 0.25s ease, opacity 0.2s ease;
+}
+
+/* Right panel (MISSION_RADAR) toggle: closed = thin tab only */
+.hud-main-layout.task-panel-closed .right-wing {
+  width: 0;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border-left: none;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* When open: task panel fills the whole window (no widening the layout) */
+.hud-main-layout:not(.task-panel-closed) .right-wing {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  min-width: unset;
+  max-width: none;
+  border-radius: 0;
+  z-index: 500;
+  overflow: hidden;
+}
+
+/* Tab strip when panel is closed: click to open (sibling of right-wing, fixed to right edge) */
+.task-panel-tab {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 80px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 100;
+  writing-mode: vertical-rl;
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--neon-cyan);
+  opacity: 0.7;
+  -webkit-app-region: no-drag;
+  transition: opacity 0.2s;
+}
+
+.task-panel-tab:hover {
+  opacity: 1;
+  background: rgba(0, 20, 30, 0.8);
+}
+
+.hud-main-layout.task-panel-closed .task-panel-tab {
+  display: flex;
+}
+
+
+/* Task panel inner: scrollable fullview */
+.right-wing .task-panel-inner {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* Status badges in task cards */
+.task-status-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 9px;
+}
+
+.task-status-badge {
+  padding: 2px 6px;
+  border-radius: 2px;
+  border: 1px solid var(--glass-border);
+  background: rgba(0, 20, 30, 0.5);
+  color: var(--text-dim);
+}
+
+.task-status-badge.done {
+  color: var(--neon-cyan);
+  border-color: rgba(0, 243, 255, 0.4);
+}
+
+.task-status-badge.pending {
+  color: #888;
 }
 
 .center-core {
@@ -380,39 +480,86 @@ body {
   font-weight: bold;
 }
 
-.dash-card {
-  background: rgba(0, 10, 20, 0.7);
-  border: 1px solid var(--glass-border);
-  padding: 12px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  transition: 0.2s;
-  border-radius: 2px;
+/* Project section: プロジェクトで一括り */
+.project-section {
+  margin-bottom: 20px;
 }
 
-.dash-card:hover {
-  border-color: var(--neon-cyan);
-  background: rgba(0, 20, 35, 0.9);
-}
-
-.dash-card.exec_wait {
-  border-left: 4px solid #ff9d00;
-}
-
-.dash-card-btn {
-  background: transparent;
-  border: 1px solid var(--neon-cyan);
+.project-section .project-header {
+  font-size: 12px;
   color: var(--neon-cyan);
-  padding: 4px 10px;
-  cursor: pointer;
-  font-size: 9px;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--glass-border);
 }
 
-.dash-card-btn:hover {
-  background: var(--neon-cyan);
-  color: #000;
+/* Task table: フェーズ | タスク名 | タスク済 | CLI | 評価（操作列なし） */
+.task-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  table-layout: auto;
 }
+
+.task-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: rgba(0, 15, 25, 0.98);
+  border-bottom: 1px solid var(--neon-cyan);
+}
+
+.task-table th {
+  text-align: left;
+  padding: 8px 10px;
+  color: var(--neon-cyan);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+}
+
+.task-table .col-phase { width: 80px; white-space: nowrap; }
+.task-table .col-title { min-width: 180px; word-break: break-all; }
+.task-table .col-status { width: 56px; text-align: center; }
+.task-table .col-cli   { width: 48px; text-align: center; }
+.task-table .col-eval  { width: 48px; text-align: center; }
+
+.task-table tbody tr.dash-row {
+  border-bottom: 1px solid var(--glass-border);
+  background: rgba(0, 10, 20, 0.6);
+  transition: 0.2s;
+}
+
+.task-table tbody tr.dash-row:hover {
+  background: rgba(0, 20, 35, 0.9);
+  border-color: var(--neon-cyan);
+}
+
+.task-table tbody tr.task-row-clickable {
+  cursor: pointer;
+}
+
+.task-table td {
+  padding: 8px 10px;
+  vertical-align: middle;
+  color: var(--text-bright);
+  line-height: 1.35;
+}
+
+.task-table td.col-title {
+  max-width: 400px;
+  word-break: break-word;
+  white-space: normal;
+}
+
+.task-cell { font-size: 10px; }
+.task-cell.done { color: var(--neon-cyan); }
+.task-cell.pending { color: #666; }
+.task-cell.failed { color: #f44; font-weight: 600; }
+
+.task-table tr.task-running { border-left: 4px solid var(--neon-cyan); }
+.task-table tr.task-done { opacity: 0.7; }
+.task-table tr.task-stopped { opacity: 0.7; }
 
 /* Filter Tabs */
 .stream-filters {

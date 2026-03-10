@@ -1,0 +1,25 @@
+CanonGate の simple-mode-desktop（HUD）で、右側のタスク表示を次のように変更してください。
+
+【前提】
+- CLI の実行依頼は Canon に依頼する想定。CanonGate から CLI 実行を依頼する機能は持たない。
+- Canon / ALE が自律的にタスクを動かしてよい。CanonGate は実行のトリガーを持たず、状態の表示のみ行う。
+
+1. **トグルで開閉**
+   - 右側の MISSION_RADAR パネルを、トグルボタンで開閉できるようにする。閉じているときは右パネルを非表示（または細いタブのみ表示）にし、開いているときは表示する。
+
+2. **開いたときは一画面全体で状態を把握**
+   - 開いているとき、右エリア（またはオーバーレイ）で、タスク一覧と次の状態を一覧で把握できるようにする：
+     - **タスク済**: タスクとして登録済み
+     - **CLI実行済**: CLI 実行済みか（バックエンドで情報があれば表示、なければ「未実行」等でよい）
+     - **評価済**: 評価フェーズ済みか（例: evaluating フォルダ由来なら「評価済」と表示）
+
+3. **既存動作の維持**
+   - 既存のタスクカードの操作（GO / OK / STOP / DONE / CHECK）と、WebSocket によるタスク同期（`tasks`, `task_status_change`）は維持する。
+
+4. **CLI 実行について**
+   - CanonGate 側に「CLI を実行する」ボタンや依頼機能は実装しない。表示は「CLI実行済」の状態を見せるのみとする。
+
+5. **バックエンド拡張（必要なら）**
+   - `CanonGate/simple_chat.py` の `manual_task_sync()` で、タスクに `folder`（next-actions / evaluating）や `cli_executed` などのフィールドを付与し、フロントで「CLI実行済」「評価済」を表示できるようにする。既存の `id`, `title`, `category`, `is_work` はそのままとする。`cli_executed` は Canon/ALE が書き出した結果をどこかで検知できれば付与する（CanonGate から CLI を叩く実装はしない）。
+
+詳細な仕様・ファイル場所・技術メモは、同一リポジトリの `CanonGate/docs/task-panel-toggle-and-fullview-plan.md` を参照してください。実装後は同ドキュメントの「6. 完了条件（DoD）」で確認してください。

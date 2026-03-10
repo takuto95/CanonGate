@@ -622,12 +622,14 @@
                     scene.remove(currentVrm.scene);
                     VRMUtils.deepDispose(currentVrm.scene);
                 }
-                // Fix orientation (remove PI rotation)
+                // Auto-Calibration
                 vrm.scene.rotation.y = 0;
-                // Move camera down slightly if needed, but let's just use default pose
                 scene.add(vrm.scene);
                 currentVrm = vrm;
-                console.log('VRM Loaded');
+
+                // --- P5: Auto-Frame Calibration ---
+                calibrateCamera(vrm);
+                console.log('VRM Loaded & Calibrated');
             }, undefined, (err) => {
                 console.error('VRM load failed:', err);
                 console.info('Run DownloadVrmModel.bat or place test.vrm in mascot-web/');
@@ -670,6 +672,20 @@
             });
         }
 
+        function calibrateCamera(vrm) {
+            const head = vrm.humanoid.getNormalizedBoneNode('head');
+            if (head) {
+                const headPos = new THREE.Vector3();
+                head.getWorldPosition(headPos);
+
+                // Adjust camera based on head height
+                // If it's a small model (chinchilla), headPos.y will be low.
+                camera.position.set(0.0, headPos.y + 0.1, headPos.y + 0.8);
+                camera.lookAt(0, headPos.y, 0);
+                console.log(`Calibrated to height: ${headPos.y}`);
+            }
+        }
+
         // Drag Rotate
         let isDragging = false;
         let prevX = 0;
@@ -692,6 +708,12 @@
         let currentJump = 0.0, targetJump = 0.0;
         let currentLean = 0.0, targetLean = 0.0;
 
+        // --- P6: Sentience Simulation State ---
+        let lastBlinkTime = 0;
+        let blinkDuration = 0.12;
+        let isBlinking = false;
+        let microJitter = new THREE.Vector3();
+
         function animate() {
             requestAnimationFrame(animate);
             const delta = clock.getDelta();
@@ -700,6 +722,12 @@
             if (currentVrm) {
                 try {
                     currentVrm.update(delta);
+
+                    // --- P5.1: Gaze (LookAt) Calibration ---
+                    // Make the character look at the virtual camera (the user's face in front of the screen)
+                    if (currentVrm.lookAt) {
+                        currentVrm.lookAt.lookAt(camera.position);
+                    }
 
                     const neck = currentVrm.humanoid.getNormalizedBoneNode('neck');
                     const spine = currentVrm.humanoid.getNormalizedBoneNode('spine');
@@ -729,6 +757,30 @@
                     const rightLowerArm = humanoid.getNormalizedBoneNode('rightLowerArm');
                     if (leftLowerArm) leftLowerArm.rotation.y = 0.4;
                     if (rightLowerArm) rightLowerArm.rotation.y = -0.4;
+
+                    // --- P6.1: Sentient Micro-Motions ---
+                    // Procedural Breathing (Chest/Shoulders)
+                    const chest = humanoid.getNormalizedBoneNode('chest');
+                    const breathingFactor = Math.sin(elapsed * 0.4) * 0.5 + 0.5; // 0 to 1
+                    if (chest) {
+                        chest.scale.set(1, 1, 1 + (breathingFactor * 0.02));
+                        chest.rotation.x = -0.02 + (breathingFactor * 0.03);
+                    }
+
+                    // Micro-Jitter (Sentience noise)
+                    if (Math.random() > 0.95) {
+                        microJitter.set(
+                            (Math.random() - 0.5) * 0.002,
+                            (Math.random() - 0.5) * 0.002,
+                            (Math.random() - 0.5) * 0.002
+                        );
+                    }
+
+                    // Natural Neck Sway
+                    if (neck) {
+                        neck.rotation.x += Math.sin(elapsed * 0.3) * 0.01 + microJitter.x;
+                        neck.rotation.y += Math.cos(elapsed * 0.2) * 0.01 + microJitter.y;
+                    }
 
                     // Leg alignment
                     const leftLowerLeg = currentVrm.humanoid.getNormalizedBoneNode('leftLowerLeg');

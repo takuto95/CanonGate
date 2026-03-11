@@ -622,9 +622,8 @@
                     scene.remove(currentVrm.scene);
                     VRMUtils.deepDispose(currentVrm.scene);
                 }
-                // Auto-Calibration: VRM default forward is often -Z (Blender/Unity); camera is at +Z.
-                // Rotate 180° around Y so the avatar faces the camera (front).
-                vrm.scene.rotation.y = Math.PI;
+                // Auto-Calibration: Ensure the avatar faces the camera (+Z direction)
+                vrm.scene.rotation.y = 0.0;
                 scene.add(vrm.scene);
                 currentVrm = vrm;
 

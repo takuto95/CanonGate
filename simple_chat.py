@@ -34,6 +34,7 @@ import scipy.io.wavfile as wavfile
 import io
 
 from canvas_server import start_canvas_server
+from google_calendar_notifier import GoogleCalendarNotifier
 
 # Windows: CP932 で表現できない文字で print が落ちないよう stdout/stderr を UTF-8 に
 if sys.platform == "win32":
@@ -228,6 +229,7 @@ HUB_PRIORITY_TAGS = {
     "[FINANCE]": "💰 家計簿のチェック結果だよ！",
     "[SYSTEM_REPORT]": "📊 システムレポートが届いたよ！",
     "[PATROL]": "🔍 パトロール報告だよ！",
+    "[CALENDAR]": "📅 予定の時間が近いよ！",
     "[ALE_START]": "🚀 オートループが動き出したよ！",
     "[MORNING]": "☀️ おはよう！今日のブリーフィングだよ！",
     "[MUSING]": "🧠 独り言だけど、いいかな？",
@@ -1077,6 +1079,92 @@ def _infer_project(title: str) -> str:
     return m.group(1) if m else title.strip()[:20] or "その他"
 
 
+def _read_frontmatter(task_path: Path) -> dict:
+    """タスクファイル先頭の簡易 frontmatter を辞書化する。"""
+    try:
+        text = task_path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return {}
+
+    if not text.startswith("---"):
+        return {}
+
+    lines = text.splitlines()
+    meta = {}
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if not key:
+            continue
+        meta[key] = value
+    return meta
+
+
+def _extract_task_priority(title: str, meta: dict) -> tuple[int, str]:
+    """優先度を正規化して (rank, label) を返す。小さいほど高優先。"""
+    import re
+
+    numeric_keys = ("eval_priority", "evaluation_priority", "sort_order", "order", "rank")
+    for key in numeric_keys:
+        raw = meta.get(key)
+        if raw is None:
+            continue
+        try:
+            return int(str(raw).strip()), f"#{int(str(raw).strip())}"
+        except Exception:
+            pass
+
+    raw_priority = str(meta.get("priority", "")).strip().lower()
+    priority_map = {
+        "s": (0, "S"),
+        "p0": (0, "P0"),
+        "critical": (0, "Critical"),
+        "urgent": (0, "Urgent"),
+        "最高": (0, "最高"),
+        "緊急": (0, "緊急"),
+        "a": (1, "A"),
+        "p1": (1, "P1"),
+        "high": (1, "High"),
+        "高": (1, "高"),
+        "b": (2, "B"),
+        "p2": (2, "P2"),
+        "medium": (2, "Medium"),
+        "med": (2, "Medium"),
+        "normal": (2, "Normal"),
+        "中": (2, "中"),
+        "c": (3, "C"),
+        "p3": (3, "P3"),
+        "low": (3, "Low"),
+        "低": (3, "低"),
+        "d": (4, "D"),
+        "backlog": (4, "Backlog"),
+        "later": (4, "Later"),
+        "後回し": (4, "後回し"),
+    }
+    if raw_priority in priority_map:
+        return priority_map[raw_priority]
+
+    title_patterns = [
+        (r"^[\[\(【]?(P0|S)[\]\)】:_\-\s]", (0, "P0")),
+        (r"^[\[\(【]?(P1|A)[\]\)】:_\-\s]", (1, "P1")),
+        (r"^[\[\(【]?(P2|B)[\]\)】:_\-\s]", (2, "P2")),
+        (r"^[\[\(【]?(P3|C)[\]\)】:_\-\s]", (3, "P3")),
+        (r"^[\[\(【]?優先\s*1[\]\)】:_\-\s]", (1, "優先1")),
+        (r"^[\[\(【]?優先\s*2[\]\)】:_\-\s]", (2, "優先2")),
+        (r"^[\[\(【]?優先\s*3[\]\)】:_\-\s]", (3, "優先3")),
+    ]
+    for pattern, normalized in title_patterns:
+        if re.match(pattern, title, re.IGNORECASE):
+            return normalized
+
+    return 999, ""
+
+
 async def manual_task_sync():
     """Immediately scans and broadcasts GTD tasks to HUD.
     tech モード = 仕事（work）だけ表示。life モード = 生活（private）だけ表示。
@@ -1096,6 +1184,7 @@ async def manual_task_sync():
                         continue
                     is_work = (domain == "work")
                     title = f.stem
+                    meta = _read_frontmatter(f)
                     category = "ego_proposal"
                     if folder == "evaluating":
                         category = "user_decision"
@@ -1108,6 +1197,7 @@ async def manual_task_sync():
                     clean_title = title.replace("【実行中】","").replace("【要整理】","").strip()
                     # プロジェクト: タイトルの先頭（-・_の前）で一括り。life/work どちらも同じルール。
                     project = _infer_project(clean_title)
+                    priority_rank, priority_label = _extract_task_priority(clean_title, meta)
                     # CLI 成功/失敗 = work_canon_runner のマーカー。成功=<stem>.txt / 失敗=<stem>.failed.txt
                     marker_dir = BASE_DIR / "logs" / "canon_run_markers"
                     cli_executed = (marker_dir / f"{f.stem}.txt").exists() if marker_dir.exists() else False
@@ -1121,7 +1211,9 @@ async def manual_task_sync():
                         "cli_executed": cli_executed,
                         "cli_failed": cli_failed,
                         "evaluated": evaluated,
-                        "project": project
+                        "project": project,
+                        "priority_rank": priority_rank,
+                        "priority_label": priority_label,
                     })
 
     # 協議メモ: tech 時は work/inbox のみ、life 時は従来の inbox
@@ -1129,9 +1221,11 @@ async def manual_task_sync():
     if inbox_for_notes.exists():
         for f in inbox_for_notes.glob("協議メモ-*.md"):
             stem = f.stem
+            meta = _read_frontmatter(f)
             marker_dir = BASE_DIR / "logs" / "canon_run_markers"
             cli_executed = (marker_dir / f"{stem}.txt").exists() if marker_dir.exists() else False
             cli_failed = (marker_dir / f"{stem}.failed.txt").exists() if marker_dir.exists() else False
+            priority_rank, priority_label = _extract_task_priority(stem, meta)
             tasks.append({
                 "id": f.name,
                 "title": stem,
@@ -1141,10 +1235,20 @@ async def manual_task_sync():
                 "cli_executed": cli_executed,
                 "cli_failed": cli_failed,
                 "evaluated": False,
-                "project": _infer_project(stem)
+                "project": _infer_project(stem),
+                "priority_rank": priority_rank,
+                "priority_label": priority_label,
             })
 
     await broadcast_ws({"type": "tasks", "tasks": tasks})
+
+
+async def notify_calendar_event(message: str, voice: bool = True):
+    """Google Calendar 通知を HUD と音声へ流す。"""
+    await broadcast_ws({"type": "hub_alert", "tag": "[CALENDAR]", "text": message})
+    await broadcast_ws({"type": "chat", "who": "ego", "text": f"【カレンダー】{message}", "tag": "patrol"})
+    if voice:
+        await play_audio_from_text(message)
 
 async def heartbeat_task():
     """ALE (Auto-Loop Engine) 用の死活監視ファイルを更新しつつ、タスクをHUDへ同期する"""
@@ -1296,6 +1400,16 @@ async def main_async():
     asyncio.create_task(file_watcher_task("report.log"))
     asyncio.create_task(heartbeat_task())
     asyncio.create_task(idle_muttering_task())
+    calendar_notifier = GoogleCalendarNotifier(
+        ics_url=os.getenv("GOOGLE_CALENDAR_ICS_URL", ""),
+        cache_path=_canongate_log_dir / "google_calendar_notified.json",
+        logger=log,
+        notify_minutes_before=int(os.getenv("GOOGLE_CALENDAR_NOTIFY_MINUTES_BEFORE", "30")),
+        poll_seconds=int(os.getenv("GOOGLE_CALENDAR_POLL_SECONDS", "60")),
+        timezone_name=os.getenv("GOOGLE_CALENDAR_TIMEZONE", "Asia/Tokyo"),
+        voice=os.getenv("GOOGLE_CALENDAR_NOTIFY_VOICE", "true").lower() in ("1", "true", "yes", "on"),
+    )
+    asyncio.create_task(calendar_notifier.run(notify_calendar_event))
     _canongate_log_dir.mkdir(exist_ok=True)  # ensure logs dir exists for heartbeat
     
     # Phase 4: Start LiveCanvas server

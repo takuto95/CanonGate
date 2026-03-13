@@ -80,6 +80,12 @@
           <div class="stream-filters" style="margin-bottom: 0; display: flex; align-items: center; gap: 8px;">
             <button class="filter-btn active" id="btn-private" onclick="setWorkFilter(false)">生活</button>
             <button class="filter-btn" id="btn-work" onclick="setWorkFilter(true)">仕事</button>
+            <select id="task-sort-select" onchange="setTaskSort(this.value)"
+              style="background: rgba(0,20,30,0.9); color: var(--neon-cyan); border: 1px solid rgba(0,255,255,0.25); padding: 4px 6px; font-size: 11px;">
+              <option value="priority" selected>優先順</option>
+              <option value="project">PJ順</option>
+              <option value="title">名前順</option>
+            </select>
             <button id="sync-btn" onclick="syncTasks()" title="SYNC_BRAIN"
               style="background:none; border:none; color:var(--neon-cyan); cursor:pointer; font-size:12px; opacity:0.6; padding:0; display:flex; align-items:center; transition: all 0.2s;">🔄</button>
             <button id="task-panel-close-btn" onclick="toggleTaskPanel(false)" title="パネルを閉じる"
@@ -169,10 +175,15 @@
     }
 
     let workMode = false;
+    let taskSortMode = 'priority';
     function setWorkFilter(isWork) {
       workMode = isWork;
       document.getElementById('btn-work').classList.toggle('active', isWork);
       document.getElementById('btn-private').classList.toggle('active', !isWork);
+      renderTasks(lastTasks);
+    }
+    function setTaskSort(mode) {
+      taskSortMode = mode || 'priority';
       renderTasks(lastTasks);
     }
 
@@ -186,25 +197,45 @@
     function getPhaseLabel(c) {
       return c === 'ego_proposal' ? '実行前' : (c === 'user_decision' ? '判断' : (c === 'ego_running' ? '実行中(E)' : (c === 'user_running' ? '実行中(U)' : '要整理')));
     }
+    function getCategorySortRank(category) {
+      const ranks = {
+        user_decision: 0,
+        ego_proposal: 1,
+        needs_org: 2,
+        ego_running: 3,
+        user_running: 4,
+      };
+      return Object.prototype.hasOwnProperty.call(ranks, category) ? ranks[category] : 9;
+    }
+    function getPrioritySortRank(task) {
+      return Number.isFinite(task.priority_rank) ? task.priority_rank : 999;
+    }
+    function compareTasks(a, b) {
+      if (taskSortMode === 'title') {
+        return (a.title || '').localeCompare(b.title || '', 'ja');
+      }
+
+      if (taskSortMode === 'project') {
+        const byProject = (a.project || '').localeCompare(b.project || '', 'ja');
+        if (byProject !== 0) return byProject;
+      }
+
+      const byPriority = getPrioritySortRank(a) - getPrioritySortRank(b);
+      if (byPriority !== 0) return byPriority;
+
+      const byCategory = getCategorySortRank(a.category) - getCategorySortRank(b.category);
+      if (byCategory !== 0) return byCategory;
+
+      return (a.title || '').localeCompare(b.title || '', 'ja');
+    }
     function renderTasks(tasks) {
       lastTasks = tasks;
       const container = document.getElementById('taskDashContent');
       if (!container) return;
 
       const filtered = tasks.filter(t => (workMode ? t.is_work : !t.is_work));
-      const byProject = {};
-      filtered.forEach(t => {
-        const p = (t.project && t.project.trim()) ? t.project.trim() : 'その他';
-        if (!byProject[p]) byProject[p] = [];
-        byProject[p].push(t);
-      });
-      const projectOrder = Object.keys(byProject).sort((a, b) => a.localeCompare(b, 'ja'));
-
-      let html = '';
-      projectOrder.forEach(projectName => {
-        const list = byProject[projectName];
-        html += `<div class="dash-category project-section"><div class="dash-category-header project-header">${escapeHtml(projectName)}</div>`;
-        html += '<table class="task-table"><thead><tr><th class="col-phase">フェーズ</th><th class="col-title">タスク名</th><th class="col-status">タスク済</th><th class="col-cli">CLI</th><th class="col-eval">評価</th></tr></thead><tbody>';
+      const renderTaskTable = (list) => {
+        let html = '<table class="task-table"><thead><tr><th class="col-phase">フェーズ</th><th class="col-title">タスク名</th><th class="col-priority">優先</th><th class="col-status">タスク済</th><th class="col-cli">CLI</th><th class="col-eval">評価</th></tr></thead><tbody>';
         list.forEach(t => {
           const c = t.category;
           const phaseLabel = getPhaseLabel(c);
@@ -213,18 +244,49 @@
           const cliFailed = t.cli_failed === true;
           const evalDone = t.evaluated === true || t.folder === 'evaluating';
           const titleSafe = escapeHtml(t.title);
+          const prioritySafe = escapeHtml(t.priority_label || '');
           const cliCell = cliDone ? '<span class="task-cell done">○</span>' : (cliFailed ? '<span class="task-cell failed" title="CLI実行で失敗">×</span>' : '<span class="task-cell pending">−</span>');
+          const priorityCell = prioritySafe ? `<span class="task-cell">${prioritySafe}</span>` : '<span class="task-cell pending">−</span>';
           html += `<tr class="dash-row ${c} task-row-clickable" data-task-id="${escapeHtml(t.id)}" data-category="${c}" data-is-work="${t.is_work}">`
             + `<td class="col-phase">${phaseLabel}</td>`
             + `<td class="col-title">${titleSafe}</td>`
+            + `<td class="col-priority">${priorityCell}</td>`
             + `<td class="col-status">${taskDone ? '<span class="task-cell done">○</span>' : '<span class="task-cell">−</span>'}</td>`
             + `<td class="col-cli">${cliCell}</td>`
             + `<td class="col-eval">${evalDone ? '<span class="task-cell done">○</span>' : '<span class="task-cell pending">−</span>'}</td>`
             + `</tr>`;
         });
-        html += '</tbody></table></div>';
+        html += '</tbody></table>';
+        return html;
+      };
+
+      if (taskSortMode === 'priority') {
+        const sorted = [...filtered].sort(compareTasks);
+        container.innerHTML = `<div class="dash-category project-section"><div class="dash-category-header project-header">優先順</div>${renderTaskTable(sorted)}</div>`;
+      } else {
+      const byProject = {};
+      filtered.forEach(t => {
+        const p = (t.project && t.project.trim()) ? t.project.trim() : 'その他';
+        if (!byProject[p]) byProject[p] = [];
+        byProject[p].push(t);
       });
-      container.innerHTML = html;
+      Object.keys(byProject).forEach(projectName => {
+        byProject[projectName].sort(compareTasks);
+      });
+      const projectOrder = Object.keys(byProject).sort((a, b) => {
+        if (taskSortMode === 'title') return a.localeCompare(b, 'ja');
+        if (taskSortMode === 'project') return a.localeCompare(b, 'ja');
+        return compareTasks(byProject[a][0], byProject[b][0]) || a.localeCompare(b, 'ja');
+      });
+
+      let html = '';
+      projectOrder.forEach(projectName => {
+        const list = byProject[projectName];
+        html += `<div class="dash-category project-section"><div class="dash-category-header project-header">${escapeHtml(projectName)}</div>`;
+        html += `${renderTaskTable(list)}</div>`;
+      });
+        container.innerHTML = html;
+      }
 
       container.querySelectorAll('.task-row-clickable').forEach(tr => {
         tr.addEventListener('click', function() {
@@ -385,6 +447,13 @@
           }
 
           if (msg.type === 'tasks') renderTasks(msg.tasks);
+
+          if (msg.type === 'hub_alert') {
+            const tag = msg.tag || '[INFO]';
+            const text = msg.text || '';
+            showToast(`${tag} ${text}`);
+            appendLog('ego', `${tag} ${text}`, 'patrol');
+          }
 
           if (msg.type === 'task_status_change') {
             const row = document.querySelector(`.dash-row[data-task-id="${msg.task_id}"]`);

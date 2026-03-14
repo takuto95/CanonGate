@@ -269,6 +269,23 @@ TTS_VOICE_KOKORO = "jf_alpha" # Japanese female
 # Conversation History: system prompt + 直近 N メッセージを保持（長時間対話の劣化防止）
 MAX_HISTORY_MESSAGES = 24
 
+# Metrics Tracking (ADR-0183)
+SESSION_METRICS = {
+    "stt_avg": 0.0,
+    "llm_avg": 0.0,
+    "rag_avg": 0.0,
+    "total_calls": 0,
+    "approvals": 0,
+    "rejections": 0,
+    "inference_runs": 0
+}
+
+def update_avg_metric(key, new_val):
+    if new_val <= 0: return
+    current = SESSION_METRICS[key]
+    count = SESSION_METRICS["total_calls"]
+    SESSION_METRICS[key] = (current * count + new_val) / (count + 1)
+
 # WebSocket Settings (set WS_PORT env to use another port if 8082 is in use)
 WS_PORT = int(os.getenv("WS_PORT", "8082"))
 WS_HOST = os.getenv("WS_HOST", "0.0.0.0")  # 0.0.0.0 for remote access (Xiaomi etc.)
@@ -487,11 +504,13 @@ async def ws_handler(websocket):
                 elif data.get("type") == "task_approve":
                     task_id = data.get("task_id")
                     log.info(f"Task Approved: {task_id}")
+                    SESSION_METRICS["approvals"] += 1
                     await broadcast_ws({"type": "task_status_change", "task_id": task_id, "status": "approved"})
                     asyncio.create_task(play_audio_from_text(f"了解した。承認として記録しておくよ。"))
                 elif data.get("type") == "task_stop":
                     task_id = data.get("task_id")
                     log.info(f"Task Stop: {task_id}")
+                    SESSION_METRICS["rejections"] += 1
                     await broadcast_ws({"type": "task_status_change", "task_id": task_id, "status": "stopped"})
                     asyncio.create_task(play_audio_from_text(f"タスクを停止したよ。"))
                 elif data.get("type") == "confirm_action":
@@ -1241,6 +1260,8 @@ async def manual_task_sync():
             })
 
     await broadcast_ws({"type": "tasks", "tasks": tasks})
+    # Also broadcast metrics
+    await broadcast_ws({"type": "metrics", "metrics": SESSION_METRICS})
 
 
 async def notify_calendar_event(message: str, voice: bool = True):
@@ -1703,6 +1724,11 @@ async def main_async():
                     history = [history[0]] + history[-MAX_HISTORY_MESSAGES:]
 
                 # Save Full Log
+                update_avg_metric("stt_avg", metrics.get("stt_duration", 0))
+                update_avg_metric("llm_avg", metrics.get("llm_total_duration", 0))
+                update_avg_metric("rag_avg", metrics.get("rag_duration", 0))
+                SESSION_METRICS["total_calls"] += 1
+                
                 save_conversation(user_text_corrected, full_response, metrics)
 
     # --- Mic reconnection loop ---

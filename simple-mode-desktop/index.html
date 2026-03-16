@@ -28,7 +28,8 @@
 
     <div class="hud-main-layout">
       <!-- Left: Intelligence Stream -->
-      <aside class="hud-wing left-wing">
+      <button class="panel-toggle-btn left-toggle" id="leftToggleBtn" onclick="toggleLeftPanel()" title="チャット表示/非表示">▶</button>
+      <aside class="hud-wing left-wing panel-hidden" id="leftPanel">
         <div style="font-size: 10px; opacity: 0.5; letter-spacing: 2px; margin-bottom: 15px;">INTELLIGENCE_STREAM</div>
         <div class="stream-filters">
           <button class="filter-btn active" onclick="setFilter('all')">全て</button>
@@ -76,7 +77,10 @@
       <!-- Right: Mission/Task Dash (toggleable) -->
       <aside class="hud-wing right-wing">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-          <div style="font-size: 10px; opacity: 0.5; letter-spacing: 2px;">MISSION_RADAR</div>
+          <div class="section-toggle" onclick="toggleTasks()" style="margin-bottom:0;">
+            <span style="font-size: 10px; opacity: 0.5; letter-spacing: 2px;">MISSION_RADAR</span>
+            <span class="toggle-arrow" id="taskToggleArrow">▼</span>
+          </div>
           <div class="stream-filters" style="margin-bottom: 0; display: flex; align-items: center; gap: 8px;">
             <button class="filter-btn active" id="btn-private" onclick="setWorkFilter(false)">生活</button>
             <button class="filter-btn" id="btn-work" onclick="setWorkFilter(true)">仕事</button>
@@ -92,14 +96,34 @@
               style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:14px; padding:0 4px; line-height:1;">◀</button>
           </div>
         </div>
+        <div id="taskPanelContent" class="collapsible-content">
         <div class="task-panel-inner">
         <div id="taskDash" style="flex: 1; display: flex; flex-direction: column; gap: 12px; overflow-y: auto;">
           <div id="taskDashContent"></div>
         </div>
         </div>
+        </div>
       </aside>
-      <!-- Tab to open panel when closed -->
-      <button type="button" class="task-panel-tab" id="task-panel-tab" onclick="toggleTaskPanel(true)" aria-label="タスクパネルを開く">MISSION</button>
+      <!-- Tabs on right edge when panel is closed -->
+      <div class="right-edge-tabs" id="rightEdgeTabs">
+        <button type="button" class="task-panel-tab" id="task-panel-tab" onclick="toggleTaskPanel(true)" aria-label="タスクパネルを開く">MISSION</button>
+        <button type="button" class="task-panel-tab notif-tab" id="bottomPanelTab" onclick="toggleBottomPanel()" aria-label="通知パネルを開く">
+          <span>NOTIFICATION</span>
+          <span class="bottom-tab-badge" id="notifBadge" style="display:none;">0</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Notification Panel (slides up from bottom) -->
+    <div class="bottom-panel" id="bottomPanel">
+      <div class="bottom-panel-header">
+        <span style="font-size: 10px; opacity: 0.5; letter-spacing: 2px;">NOTIFICATION_STREAM</span>
+        <div style="display:flex; gap:12px; align-items:center;">
+          <button onclick="clearNotifications()" style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:10px;">クリア</button>
+          <button onclick="toggleBottomPanel()" style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:12px;">✕</button>
+        </div>
+      </div>
+      <div class="bottom-panel-content" id="notifContent"></div>
     </div>
 
     <div id="toast" class="toast">NOTIFICATION</div>
@@ -159,6 +183,30 @@
       }
     }
 
+    function toggleSection(contentId, arrowId) {
+      const content = document.getElementById(contentId);
+      const arrow = document.getElementById(arrowId);
+      if (content.classList.contains('collapsed')) {
+        content.classList.remove('collapsed');
+        arrow.textContent = '▼';
+      } else {
+        content.classList.add('collapsed');
+        arrow.textContent = '▶';
+      }
+    }
+    function toggleLeftPanel() {
+      const panel = document.getElementById('leftPanel');
+      const btn = document.getElementById('leftToggleBtn');
+      if (panel.classList.contains('panel-hidden')) {
+        panel.classList.remove('panel-hidden');
+        btn.textContent = '◀';
+      } else {
+        panel.classList.add('panel-hidden');
+        btn.textContent = '▶';
+      }
+    }
+    function toggleTasks() { toggleSection('taskPanelContent', 'taskToggleArrow'); }
+
     function setFilter(filter) {
       currentFilter = filter;
       document.querySelectorAll('.filter-btn').forEach(btn => {
@@ -174,8 +222,24 @@
       });
     }
 
+    // domain 自動判定: URL パラメータ or バックエンドから届くタスクの is_work で判定
     let workMode = false;
+    let _workModeAutoDetected = false;
     let taskSortMode = 'priority';
+    try {
+      const _p = new URLSearchParams(window.location.search || '');
+      if (_p.get('domain') === 'tech') {
+        workMode = true;
+        _workModeAutoDetected = true;
+      }
+    } catch(e) {}
+    function _syncFilterButtons() {
+      var bw = document.getElementById('btn-work');
+      var bp = document.getElementById('btn-private');
+      if (bw) bw.classList.toggle('active', workMode);
+      if (bp) bp.classList.toggle('active', !workMode);
+    }
+    if (_workModeAutoDetected) _syncFilterButtons();
     function setWorkFilter(isWork) {
       workMode = isWork;
       document.getElementById('btn-work').classList.toggle('active', isWork);
@@ -195,7 +259,8 @@
       return div.innerHTML;
     }
     function getPhaseLabel(c) {
-      return c === 'ego_proposal' ? '実行前' : (c === 'user_decision' ? '判断' : (c === 'ego_running' ? '実行中(E)' : (c === 'user_running' ? '実行中(U)' : '要整理')));
+      const labels = { ego_proposal: '実行前', user_decision: '判断', ego_running: '実行中(E)', user_running: '実行中(U)', done_recent: '完了', needs_org: '要整理' };
+      return labels[c] || '要整理';
     }
     function getCategorySortRank(category) {
       const ranks = {
@@ -204,6 +269,7 @@
         needs_org: 2,
         ego_running: 3,
         user_running: 4,
+        done_recent: 5,
       };
       return Object.prototype.hasOwnProperty.call(ranks, category) ? ranks[category] : 9;
     }
@@ -228,65 +294,183 @@
 
       return (a.title || '').localeCompare(b.title || '', 'ja');
     }
-    function renderTasks(tasks) {
+    let lastCanonSummary = {};
+    let lastSubLaneLabels = {};
+    function renderTasks(tasks, laneCounts, canonSummary, subLaneLabels) {
       lastTasks = tasks;
+      if (canonSummary) lastCanonSummary = canonSummary;
+      if (subLaneLabels) lastSubLaneLabels = subLaneLabels;
       const container = document.getElementById('taskDashContent');
       if (!container) return;
+      try { _renderTasksInner(tasks, container); }
+      catch(e) { console.error('renderTasks error:', e); container.innerHTML = '<div style="color:#f44;padding:12px;">表示エラー: ' + e.message + '</div>'; }
+    }
 
+    const SUB_LANE_ORDER = ['urgent','this_week','projects','adr','slack','waiting','canon_queue','low_priority'];
+    const SUB_LANE_DEFAULTS = {
+      urgent: '\u{1F534} 火急', this_week: '\u{1F7E1} 今週やること', projects: '\u{1F4CA} プロジェクト進行',
+      adr: '\u{1F4CB} ADR 未協議', slack: '\u{1F4AC} Slack 未確認', waiting: '\u23F3 待ち状態',
+      canon_queue: '\u{1F916} Canon 処理中/予定', low_priority: '\u{1F4DD} 確認任意'
+    };
+
+    function _renderTaskRow(t) {
+      const hint = escapeHtml(t.action_hint || getPhaseLabel(t.category) || '');
+      const hintClass = t.cli_failed ? 'action-failed'
+        : t.sub_lane === 'urgent' ? 'action-failed'
+        : (t.category === 'user_decision' ? 'action-decision' : 'action-review');
+      const ctx = t.context ? escapeHtml(t.context) : '';
+      const srcUrl = t.source_url || '';
+      const run = t.last_run ? escapeHtml(t.last_run) : '';
+      const failReason = t.failure_reason ? escapeHtml(t.failure_reason) : '';
+      let detail = '';
+      const parts = [];
+      if (failReason) parts.push('<span class="fail-reason">' + failReason + '</span>');
+      else if (ctx) parts.push(ctx);
+      if (t.source === 'clickup' && srcUrl) parts.push('<a href="' + escapeHtml(srcUrl) + '" target="_blank" class="source-link">ClickUp</a>');
+      if (run) parts.push('\u6700\u7D42: ' + run);
+      if (parts.length > 0) detail = `<div class="task-detail">${parts.join(' \u00B7 ')}</div>`;
+      return `<tr class="dash-row ${t.category || ''} task-row-clickable" data-task-id="${escapeHtml(t.id)}" data-category="${t.category || 'ego_proposal'}" data-is-work="${t.is_work}">`
+        + `<td class="col-action"><span class="action-hint ${hintClass}">${hint}</span></td>`
+        + `<td class="col-title">${escapeHtml(t.title)}${detail}</td>`
+        + `</tr>`;
+    }
+
+    function _renderTasksInner(tasks, container) {
       const filtered = tasks.filter(t => (workMode ? t.is_work : !t.is_work));
-      const renderTaskTable = (list) => {
-        let html = '<table class="task-table"><thead><tr><th class="col-phase">フェーズ</th><th class="col-title">タスク名</th><th class="col-priority">優先</th><th class="col-status">タスク済</th><th class="col-cli">CLI</th><th class="col-eval">評価</th></tr></thead><tbody>';
-        list.forEach(t => {
-          const c = t.category;
-          const phaseLabel = getPhaseLabel(c);
-          const taskDone = true;
-          const cliDone = t.cli_executed === true;
-          const cliFailed = t.cli_failed === true;
-          const evalDone = t.evaluated === true || t.folder === 'evaluating';
-          const titleSafe = escapeHtml(t.title);
-          const prioritySafe = escapeHtml(t.priority_label || '');
-          const cliCell = cliDone ? '<span class="task-cell done">○</span>' : (cliFailed ? '<span class="task-cell failed" title="CLI実行で失敗">×</span>' : '<span class="task-cell pending">−</span>');
-          const priorityCell = prioritySafe ? `<span class="task-cell">${prioritySafe}</span>` : '<span class="task-cell pending">−</span>';
-          html += `<tr class="dash-row ${c} task-row-clickable" data-task-id="${escapeHtml(t.id)}" data-category="${c}" data-is-work="${t.is_work}">`
-            + `<td class="col-phase">${phaseLabel}</td>`
-            + `<td class="col-title">${titleSafe}</td>`
-            + `<td class="col-priority">${priorityCell}</td>`
-            + `<td class="col-status">${taskDone ? '<span class="task-cell done">○</span>' : '<span class="task-cell">−</span>'}</td>`
-            + `<td class="col-cli">${cliCell}</td>`
-            + `<td class="col-eval">${evalDone ? '<span class="task-cell done">○</span>' : '<span class="task-cell pending">−</span>'}</td>`
-            + `</tr>`;
+
+      filtered.forEach(t => {
+        if (!t.lane) {
+          if (t.category === 'user_decision' || t.category === 'user_running' || t.cli_failed) t.lane = 'your_turn';
+          else t.lane = '_canon';
+        }
+      });
+
+      const yourTurn = filtered.filter(t => t.lane === 'your_turn');
+      const doneRecent = filtered.filter(t => t.category === 'done_recent');
+      const cs = lastCanonSummary || {};
+      const hasSubLanes = yourTurn.some(t => t.sub_lane);
+
+      let html = '<div class="lane-container">';
+
+      // ===== 今週サマリ =====
+      const ws = cs.weekly_summary || [];
+      if (ws.length > 0) {
+        const wyou = cs.weekly_you || 0;
+        const wcanon = cs.weekly_canon || 0;
+        html += '<div class="weekly-summary">';
+        html += `<div class="weekly-header">\u{1F4C5} \u4ECA\u9031\u306E\u3084\u308B\u3053\u3068 <span class="weekly-counts">\u3042\u306A\u305F ${wyou} \u4EF6\u30FB Canon ${wcanon} \u4EF6</span></div>`;
+        html += '<div class="weekly-list">';
+        const youItems = ws.filter(w => w.who === '\u3042\u306A\u305F');
+        const canonItems = ws.filter(w => w.who === 'Canon');
+        youItems.forEach((w, i) => {
+          html += `<div class="weekly-item weekly-you"><span class="weekly-num">${i+1}</span><span class="weekly-title">${escapeHtml(w.title)}</span></div>`;
+        });
+        if (canonItems.length > 0) {
+          html += `<div class="weekly-divider">Canon \u304C\u51E6\u7406 (${canonItems.length}\u4EF6)</div>`;
+          const showCanon = canonItems.slice(0, 5);
+          showCanon.forEach(w => {
+            html += `<div class="weekly-item weekly-canon"><span class="weekly-bot">\u{1F916}</span><span class="weekly-title">${escapeHtml(w.title)}</span></div>`;
+          });
+          if (canonItems.length > 5) html += `<div class="weekly-more">+${canonItems.length - 5} \u4EF6</div>`;
+        }
+        html += '</div></div>';
+      }
+
+      // ===== あなたの番（詳細） =====
+      html += '<div class="lane lane-your-turn">';
+      html += `<div class="lane-header your-turn-header">\u8A73\u7D30 <span class="lane-badge">${yourTurn.length}</span></div>`;
+
+      // proactive（会議）はグループの外
+      const proactiveItems = yourTurn.filter(t => t.category === 'proactive');
+      if (proactiveItems.length > 0) {
+        html += '<div class="proactive-section">';
+        proactiveItems.forEach(t => {
+          const icon = t.proactive_type === 'meeting' ? '\u{1F4C5}' : (t.proactive_type === 'action' ? '\u{1F4CB}' : '\u23F3');
+          html += `<div class="proactive-item"><span class="proactive-icon">${icon}</span>`
+            + `<span class="proactive-title">${escapeHtml(t.title)}</span>`
+            + (t.context ? `<span class="proactive-ctx">${escapeHtml(t.context)}</span>` : '')
+            + `</div>`;
+        });
+        html += '</div>';
+      }
+
+      const actionItems = yourTurn.filter(t => t.category !== 'proactive');
+
+      if (hasSubLanes && actionItems.length > 0) {
+        // sub_lane 別グループ表示
+        const groups = {};
+        actionItems.forEach(t => {
+          const sl = t.sub_lane || '_other';
+          if (!groups[sl]) groups[sl] = [];
+          groups[sl].push(t);
+        });
+        const labels = Object.keys(lastSubLaneLabels).length > 0 ? lastSubLaneLabels : SUB_LANE_DEFAULTS;
+        SUB_LANE_ORDER.forEach(sl => {
+          if (!groups[sl] || groups[sl].length === 0) return;
+          const label = labels[sl] || sl;
+          const collapsed = (sl === 'canon_queue' || sl === 'low_priority' || sl === 'waiting');
+          html += `<div class="sub-lane-group${collapsed ? ' collapsed' : ''}" data-sub-lane="${sl}">`;
+          html += `<div class="sub-lane-header" onclick="this.parentElement.classList.toggle('collapsed')">`
+            + `<span class="sub-lane-label">${escapeHtml(label)}</span>`
+            + `<span class="sub-lane-count">${groups[sl].length}</span>`
+            + `<span class="sub-lane-arrow">\u25BC</span>`
+            + `</div>`;
+          html += '<table class="task-table"><tbody>';
+          groups[sl].sort(compareTasks).forEach(t => { html += _renderTaskRow(t); });
+          html += '</tbody></table></div>';
+        });
+        // _other
+        if (groups['_other'] && groups['_other'].length > 0) {
+          html += '<div class="sub-lane-group"><div class="sub-lane-header"><span class="sub-lane-label">その他</span><span class="sub-lane-count">' + groups['_other'].length + '</span></div>';
+          html += '<table class="task-table"><tbody>';
+          groups['_other'].forEach(t => { html += _renderTaskRow(t); });
+          html += '</tbody></table></div>';
+        }
+      } else if (actionItems.length > 0) {
+        // 従来の一括表示
+        html += '<table class="task-table"><tbody>';
+        actionItems.sort(compareTasks).forEach(t => { html += _renderTaskRow(t); });
+        html += '</tbody></table>';
+      } else {
+        html += '<div class="lane-empty">Canon \u304C\u3059\u3079\u3066\u51E6\u7406\u4E2D \u2014 \u3042\u306A\u305F\u3078\u306E\u78BA\u8A8D\u4E8B\u9805\u306A\u3057</div>';
+      }
+      html += '</div>';
+
+      // ===== Canon 稼働状況 =====
+      html += '<div class="lane lane-canon-output">';
+      html += '<div class="lane-header canon-output-header">Canon \u7A3C\u50CD\u72B6\u6CC1</div>';
+      html += '<div class="canon-summary-bar">';
+      const done = cs.cli_done || 0;
+      const running = cs.running || 0;
+      const auto = cs.autonomous || 0;
+      const failed = cs.failed || 0;
+      const queue = cs.queue || 0;
+      if (queue > 0) html += `<span class="summary-chip chip-running">Canon\u51E6\u7406\u4E88\u5B9A ${queue}</span>`;
+      if (done > 0) html += `<span class="summary-chip chip-done">\u5B8C\u4E86 ${done}</span>`;
+      if (running > 0) html += `<span class="summary-chip chip-running">\u5B9F\u884C\u4E2D ${running}</span>`;
+      if (auto > 0) html += `<span class="summary-chip chip-pending">\u5F85\u6A5F\u4E2D ${auto}</span>`;
+      if (failed > 0) html += `<span class="summary-chip chip-failed">\u5931\u6557 ${failed}</span>`;
+      if (done === 0 && running === 0 && auto === 0 && failed === 0 && queue === 0) html += '<span class="summary-chip chip-pending">\u30C7\u30FC\u30BF\u306A\u3057</span>';
+      html += '</div>';
+      // Canon 処理予定タスク一覧
+      if (cs.queue_titles && cs.queue_titles.length > 0) {
+        html += '<div class="canon-queue-list">';
+        cs.queue_titles.forEach(title => {
+          html += `<div class="canon-queue-item">\u{1F916} ${escapeHtml(title)}</div>`;
+        });
+        html += '</div>';
+      }
+      if (doneRecent.length > 0) {
+        html += '<div class="lane-sub-header">\u76F4\u8FD124h\u5B8C\u4E86</div><table class="task-table"><tbody>';
+        doneRecent.forEach(t => {
+          html += `<tr class="dash-row done_recent"><td class="col-title">${escapeHtml(t.title)}</td><td class="col-eval">${escapeHtml(t.completed_at || '')}</td></tr>`;
         });
         html += '</tbody></table>';
-        return html;
-      };
-
-      if (taskSortMode === 'priority') {
-        const sorted = [...filtered].sort(compareTasks);
-        container.innerHTML = `<div class="dash-category project-section"><div class="dash-category-header project-header">優先順</div>${renderTaskTable(sorted)}</div>`;
-      } else {
-      const byProject = {};
-      filtered.forEach(t => {
-        const p = (t.project && t.project.trim()) ? t.project.trim() : 'その他';
-        if (!byProject[p]) byProject[p] = [];
-        byProject[p].push(t);
-      });
-      Object.keys(byProject).forEach(projectName => {
-        byProject[projectName].sort(compareTasks);
-      });
-      const projectOrder = Object.keys(byProject).sort((a, b) => {
-        if (taskSortMode === 'title') return a.localeCompare(b, 'ja');
-        if (taskSortMode === 'project') return a.localeCompare(b, 'ja');
-        return compareTasks(byProject[a][0], byProject[b][0]) || a.localeCompare(b, 'ja');
-      });
-
-      let html = '';
-      projectOrder.forEach(projectName => {
-        const list = byProject[projectName];
-        html += `<div class="dash-category project-section"><div class="dash-category-header project-header">${escapeHtml(projectName)}</div>`;
-        html += `${renderTaskTable(list)}</div>`;
-      });
-        container.innerHTML = html;
       }
+      html += '</div>';
+
+      html += '</div>';
+      container.innerHTML = html;
 
       container.querySelectorAll('.task-row-clickable').forEach(tr => {
         tr.addEventListener('click', function() {
@@ -297,7 +481,7 @@
         });
       });
 
-      if (tasks.some(t => t.category === 'user_decision')) {
+      if (yourTurn.length > 0) {
         avatarFrame.style.borderColor = '#ff9d00';
         avatarFrame.style.boxShadow = '0 0 15px rgba(255,157,0,0.3)';
       } else {
@@ -446,13 +630,42 @@
             }
           }
 
-          if (msg.type === 'tasks') renderTasks(msg.tasks);
+          if (msg.type === 'tasks') {
+            // 自動判定: 全タスクが is_work=true なら仕事モードに切り替え
+            if (!_workModeAutoDetected && msg.tasks && msg.tasks.length > 0) {
+              const allWork = msg.tasks.every(t => t.is_work);
+              const allPrivate = msg.tasks.every(t => !t.is_work);
+              if (allWork) { workMode = true; _workModeAutoDetected = true; _syncFilterButtons(); }
+              else if (allPrivate) { workMode = false; _workModeAutoDetected = true; _syncFilterButtons(); }
+            }
+            renderTasks(msg.tasks, msg.lane_counts, msg.canon_summary, msg.sub_lane_labels);
+            // 失敗タスクを通知パネルに追加（重複防止）
+            const failedTasks = (msg.tasks || []).filter(t => t.cli_failed || t.category === 'cli_failed');
+            failedTasks.forEach(ft => {
+              const exists = notifications.some(n => n._taskId === ft.id);
+              if (!exists) {
+                addNotification({
+                  type: 'failed',
+                  title: ft.title || ft.id,
+                  detail: ft.failure_reason || '',
+                  time: ft.last_run || '',
+                  _taskId: ft.id,
+                });
+              }
+            });
+          }
 
           if (msg.type === 'hub_alert') {
             const tag = msg.tag || '[INFO]';
             const text = msg.text || '';
             showToast(`${tag} ${text}`);
             appendLog('ego', `${tag} ${text}`, 'patrol');
+            const nType = tag.includes('FAIL') || tag.includes('ERROR') ? 'alert' : 'info';
+            addNotification({
+              type: nType,
+              title: `${tag} ${text}`,
+              time: new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }),
+            });
           }
 
           if (msg.type === 'task_status_change') {
@@ -590,15 +803,88 @@
     };
 
     window.handleTask = (id, cat, is_work) => {
-      if (ws && ws.readyState === 1) {
-        const payload = (type) => ({ type, task_id: id, is_work: !!is_work });
-        if (cat === 'user_decision') ws.send(JSON.stringify(payload('task_approve')));
-        else if (cat === 'ego_running') ws.send(JSON.stringify(payload('task_stop')));
-        else if (cat === 'user_running') ws.send(JSON.stringify(payload('task_complete')));
-        else ws.send(JSON.stringify(payload('task_execute')));
-        showToast('SEND_COMMAND: ' + id);
+      const input = document.getElementById('commandInput');
+      if (input) {
+        const cleanId = id.replace('.md', '').replace(/【.*?】/g, '');
+        input.value = cleanId + ' について ';
+        input.focus();
       }
     };
+
+    // ===== Bottom Notification Panel =====
+    let bottomPanelOpen = false;
+    let notifications = [];
+
+    function toggleBottomPanel() {
+      bottomPanelOpen = !bottomPanelOpen;
+      const panel = document.getElementById('bottomPanel');
+      const badge = document.getElementById('notifBadge');
+      if (bottomPanelOpen) {
+        panel.classList.add('open');
+        badge.style.display = 'none';
+        notifications.forEach(n => n.read = true);
+      } else {
+        panel.classList.remove('open');
+      }
+    }
+
+    function addNotification(item) {
+      notifications.unshift(item);
+      if (notifications.length > 50) notifications.pop();
+      _renderNotifications();
+      if (!bottomPanelOpen) {
+        const badge = document.getElementById('notifBadge');
+        const unread = notifications.filter(n => !n.read).length;
+        if (unread > 0) {
+          badge.textContent = unread;
+          badge.style.display = 'inline-block';
+        }
+      }
+    }
+
+    function clearNotifications() {
+      notifications = [];
+      _renderNotifications();
+      const badge = document.getElementById('notifBadge');
+      badge.style.display = 'none';
+    }
+
+    function _renderNotifications() {
+      const el = document.getElementById('notifContent');
+      if (!el) return;
+      if (notifications.length === 0) {
+        el.innerHTML = '<div class="notif-empty">通知はありません</div>';
+        return;
+      }
+      let html = '';
+      notifications.forEach((n, i) => {
+        const isFailed = n.type === 'failed' || n.type === 'cli_failed';
+        const clickAttr = isFailed ? `onclick="notifClick(${i})" style="cursor:pointer;"` : '';
+        const tagClass = isFailed ? 'notif-tag-failed' : (n.type === 'alert' ? 'notif-tag-alert' : 'notif-tag-info');
+        const tagLabel = isFailed ? 'Canon 実行失敗' : (n.type === 'alert' ? 'ALERT' : 'INFO');
+        html += `<div class="notif-item ${isFailed ? 'notif-clickable' : ''}" ${clickAttr}>`;
+        html += `<span class="notif-tag ${tagClass}">${tagLabel}</span>`;
+        html += `<div class="notif-body">`;
+        html += `<div class="notif-title">${escapeHtml(n.title || '')}</div>`;
+        if (n.detail) html += `<div class="notif-detail">${escapeHtml(n.detail)}</div>`;
+        if (n.time) html += `<div class="notif-time">${escapeHtml(n.time)}</div>`;
+        html += `</div></div>`;
+      });
+      el.innerHTML = html;
+    }
+
+    function notifClick(idx) {
+      const n = notifications[idx];
+      if (!n) return;
+      n.read = true;
+      const input = document.getElementById('commandInput');
+      if (input) {
+        const cleanTitle = (n.title || '').replace('.md', '').replace(/【.*?】/g, '');
+        input.value = cleanTitle + ' の失敗原因について ';
+        input.focus();
+      }
+      _renderNotifications();
+    }
 
     // Electron Controls
     try {

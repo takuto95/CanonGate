@@ -464,7 +464,8 @@ async def ws_handler(websocket):
                         asyncio.create_task(play_audio_from_text(msg))
                 elif data.get("type") == "refresh_tasks":
                     log.info("UI Requested manual task refresh.")
-                    asyncio.create_task(manual_task_sync())
+                    # 先に state-tech を更新してからタスク同期（Canon work と表示の一致を保つ）
+                    asyncio.create_task(_refresh_tasks_with_state_tech_sync())
                 elif data.get("type") == "mute":
                     global MUTED
                     MUTED = data.get("value", False)
@@ -1071,6 +1072,10 @@ async def file_watcher_task(filename):
                         await INPUT_QUEUE.put({"text": f"【システム通知】{tag}{content}", "stt_duration": 0})
                         interrupted = True
 
+                if not interrupted and "[TASK_SYNC]" in line:
+                    await manual_task_sync()
+                    interrupted = True
+
                 if not interrupted and "[SYSTEM_REPORT]" in line:
                     content = line.replace("[SYSTEM_REPORT]", "").strip()
                     await broadcast_ws({"type": "chat", "who": "ego", "text": f"【システムレポート】{content}", "tag": "patrol"})
@@ -1122,6 +1127,218 @@ def _read_frontmatter(task_path: Path) -> dict:
             continue
         meta[key] = value
     return meta
+
+
+def _extract_task_context(task_path: Path, marker_dir: Path) -> tuple[str, str]:
+    """タスク本文から「なぜ / 何をすべきか」と最終実行状態を返す。"""
+    context = ""
+    last_run = ""
+    try:
+        text = task_path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return context, last_run
+
+    import re as _re
+    body = _re.sub(r"^---\s*\n.*?\n---\s*\n?", "", text, count=1, flags=_re.DOTALL)
+    body = _re.sub(r"^#\s+.*\n?", "", body, count=1).strip()
+
+    for section_header in ["## Next Action", "## 目的", "## 状態", "## Canon 実行"]:
+        match = _re.search(_re.escape(section_header) + r"\s*\n(.*?)(?=\n##|\Z)", body, _re.DOTALL)
+        if match:
+            lines = [l.strip().lstrip("-").strip() for l in match.group(1).strip().splitlines() if l.strip()]
+            context = lines[0][:80] if lines else ""
+            break
+
+    if not context:
+        for line in body.splitlines():
+            line = line.strip().lstrip("-").strip()
+            if line and not line.startswith("#") and not line.startswith("|") and not line.startswith(">"):
+                context = line[:80]
+                break
+
+    stem = task_path.stem
+    for suffix, label in [(".failed.txt", "失敗"), (".txt", "成功")]:
+        marker = marker_dir / f"{stem}{suffix}"
+        if marker.exists():
+            try:
+                mtime = marker.stat().st_mtime
+                from datetime import datetime as _dt
+                last_run = f"{label} {_dt.fromtimestamp(mtime).strftime('%m/%d %H:%M')}"
+            except Exception:
+                last_run = label
+            break
+
+    return context, last_run
+
+
+def _extract_failure_reason(task_stem: str) -> str:
+    """canon_run_errors.log から該当タスクの直近エラーを抽出。"""
+    error_log = BASE_DIR / "logs" / "canon_run_errors.log"
+    if not error_log.exists():
+        return ""
+    try:
+        raw = error_log.read_bytes()
+    except Exception:
+        return ""
+
+    import re as _re
+    text = raw.decode("utf-8", errors="replace")
+    blocks = list(_re.finditer(
+        r"---\s+\d{4}-\d{2}-\d{2}T[\d:.]+\s+task=.*?---\s*\n(.*?)(?=\n---|\Z)",
+        text, _re.DOTALL
+    ))
+    if not blocks:
+        return ""
+    last_block = blocks[-1].group(1).strip()
+    for line in last_block.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        clean = _re.sub(r"[\x00-\x1f\ufffd]", "", line)
+        if len(clean) < 5:
+            continue
+        for kw in ["Error", "Exception", "Failed", "Connection", "Timeout", "refused", "Caused by"]:
+            if kw in clean:
+                clean = _re.sub(r"object at 0x[0-9a-fA-F]+", "", clean)
+                ascii_clean = _re.sub(r"[^\x20-\x7e\u3000-\u9fff\uff00-\uffef]", "", clean)
+                return ascii_clean[:150]
+    first_line = last_block.splitlines()[0].strip() if last_block else ""
+    clean = _re.sub(r"[^\x20-\x7e\u3000-\u9fff\uff00-\uffef]", "", first_line)
+    return clean[:150] if len(clean) > 5 else ""
+
+
+def _extract_my_actions(meeting_text: str) -> list:
+    """会議アジェンダから「風岡」のアクション項目を抽出する。"""
+    import re as _re
+    actions = []
+    table_rows = _re.findall(r"\|(.+?)\|(.+?)\|(.+?)\|", meeting_text)
+    for row in table_rows:
+        cols = [c.strip() for c in row]
+        if len(cols) >= 2:
+            assignee = cols[0]
+            if "風岡" in assignee or "全員" in assignee or "共有" in assignee:
+                action_text = cols[1].strip().lstrip("*").rstrip("*").strip()
+                if action_text and action_text != "アクション（何をすることか）" and not action_text.startswith("---"):
+                    deadline = cols[2].strip() if len(cols) >= 3 else ""
+                    actions.append({"action": action_text, "deadline": deadline})
+    return actions
+
+
+def _scan_proactive_items() -> list:
+    """先回りで表示すべき項目を生成する。"""
+    items = []
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    meetings_dirs = [
+        BASE_DIR.parent / "Spec-driven-miraie" / "docs" / "organization" / "meetings",
+    ]
+    for mdir in meetings_dirs:
+        if not mdir.exists():
+            continue
+        for f in mdir.glob(f"*{today_str}*.md"):
+            try:
+                text = f.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                continue
+            # 会議メモに「完了」と書いてあればあなたの番に出さない（リフレッシュで消える）
+            head = text[:2500]
+            if "**完了**" in head or ("✅" in head and "完了" in head) or "完了**" in head or "（完了）" in head:
+                continue
+            import re as _re
+            title_match = _re.search(r"^#\s+(.+)", text, _re.MULTILINE)
+            title = title_match.group(1).strip()[:60] if title_match else f.stem
+            time_match = _re.search(r"(\d{1,2}:\d{2})", title)
+            time_str = time_match.group(1) if time_match else ""
+            items.append({
+                "id": f"proactive-meeting-{f.stem}",
+                "title": title,
+                "category": "proactive",
+                "is_work": True,
+                "folder": "proactive",
+                "cli_executed": False,
+                "cli_failed": False,
+                "evaluated": False,
+                "project": "",
+                "priority_rank": 0,
+                "priority_label": "",
+                "context": f"今日の会議 {time_str}".strip(),
+                "last_run": "",
+                "action_hint": "アジェンダ確認",
+                "lane": "your_turn",
+                "is_internal": False,
+                "proactive_type": "meeting",
+            })
+            actions = _extract_my_actions(text)
+            for i, action in enumerate(actions):
+                items.append({
+                    "id": f"proactive-action-{f.stem}-{i}",
+                    "title": action["action"][:60],
+                    "category": "proactive",
+                    "is_work": True,
+                    "folder": "proactive",
+                    "cli_executed": False,
+                    "cli_failed": False,
+                    "evaluated": False,
+                    "project": "",
+                    "priority_rank": 1,
+                    "priority_label": "",
+                    "context": action.get("deadline", ""),
+                    "last_run": "",
+                    "action_hint": "あなたの宿題",
+                    "lane": "your_turn",
+                    "is_internal": False,
+                    "proactive_type": "action",
+                })
+
+    gtd_work = BASE_DIR / ".agent" / "gtd" / "work" / "next-actions"
+    if gtd_work.exists():
+        import re as _re
+        wait_patterns = ["確認待ち", "依頼中", "依頼済", "待ち"]
+        seen_prefixes = set()
+        for f in sorted(gtd_work.glob("*.md")):
+            if f.name in ("README.md", "INDEX.md"):
+                continue
+            if f.name.startswith("infer_") or f.name.startswith("auto_"):
+                continue
+            stem = f.stem.replace("【実行中】", "").replace("【要整理】", "").strip()
+            if stem == "INDEX":
+                continue
+            prefix = stem[:20]
+            if prefix in seen_prefixes:
+                continue
+            try:
+                text = f.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                continue
+            for pat in wait_patterns:
+                if pat in text:
+                    ctx_line = ""
+                    for line in text.splitlines():
+                        if pat in line:
+                            ctx_line = line.strip().lstrip("-").strip()[:80]
+                            break
+                    seen_prefixes.add(prefix)
+                    items.append({
+                        "id": f"proactive-wait-{f.stem}",
+                        "title": stem,
+                        "category": "proactive",
+                        "is_work": True,
+                        "folder": "proactive",
+                        "cli_executed": False,
+                        "cli_failed": False,
+                        "evaluated": False,
+                        "project": "",
+                        "priority_rank": 50,
+                        "priority_label": "",
+                        "context": ctx_line or f"{pat}状態",
+                        "last_run": "",
+                        "action_hint": "フォローアップ確認",
+                        "lane": "your_turn",
+                        "is_internal": False,
+                        "proactive_type": "followup",
+                    })
+                    break
+    return items
 
 
 def _extract_task_priority(title: str, meta: dict) -> tuple[int, str]:
@@ -1184,10 +1401,42 @@ def _extract_task_priority(title: str, meta: dict) -> tuple[int, str]:
     return 999, ""
 
 
+async def _refresh_tasks_with_state_tech_sync():
+    """リフレッシュ時: state-tech 更新 → cross_source_sync → タスク同期。"""
+    _env = os.environ.copy()
+    _env["PYTHONIOENCODING"] = "utf-8"
+    for script_name in ("state_tech_auto_updater.py", "cross_source_sync.py"):
+        try:
+            script = BASE_DIR / "scripts" / "guardian" / script_name
+            if script.exists():
+                proc = await asyncio.create_subprocess_exec(
+                    sys.executable, "-u", str(script),
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(BASE_DIR),
+                    env=_env,
+                )
+                await asyncio.wait_for(proc.wait(), timeout=60)
+                if proc.returncode != 0 and proc.stderr:
+                    err = (await proc.stderr.read()).decode("utf-8", errors="replace").strip()
+                    log.warning(f"{script_name} exit %s: %s", proc.returncode, err[:200])
+        except Exception as e:
+            log.warning(f"{script_name} run failed: {e}")
+    await manual_task_sync()
+
+
 async def manual_task_sync():
     """Immediately scans and broadcasts GTD tasks to HUD.
     tech モード = 仕事（work）だけ表示。life モード = 生活（private）だけ表示。
     """
+    try:
+        await _manual_task_sync_inner()
+    except Exception as e:
+        log.error(f"manual_task_sync FAILED: {e}", exc_info=True)
+        await broadcast_ws({"type": "tasks", "tasks": [], "lane_counts": {"your_turn": 0, "canon_output": 0}, "canon_summary": {}})
+
+
+async def _manual_task_sync_inner():
     inbox_dir = BASE_DIR / ".agent" / "inbox"
     gtd_dir = BASE_DIR / ".agent" / "gtd"
     # tech → 仕事だけ / life → 生活だけ（VBS で tech 選択時は生活タスクを出さない）
@@ -1199,28 +1448,33 @@ async def manual_task_sync():
             target_dir = gtd_dir / domain / folder
             if target_dir.exists():
                 for f in target_dir.glob("*.md"):
-                    if f.name.startswith("auto_") or f.name == "README.md":
+                    if f.name in ("README.md", "INDEX.md"):
                         continue
                     is_work = (domain == "work")
                     title = f.stem
+                    if title.replace("【実行中】","").strip() == "INDEX":
+                        continue
                     meta = _read_frontmatter(f)
+                    is_canon_exec = str(meta.get("canon_executable", "")).lower() in ("true", "yes", "1")
+
                     category = "ego_proposal"
                     if folder == "evaluating":
                         category = "user_decision"
                     elif "【実行中】" in title:
-                        category = "ego_running" if ("EGO" in title or "ALE" in title) else "user_running"
+                        category = "ego_running" if is_canon_exec else "user_running"
                     elif "【要整理】" in title:
                         category = "needs_org"
 
                     evaluated = (folder == "evaluating")
                     clean_title = title.replace("【実行中】","").replace("【要整理】","").strip()
-                    # プロジェクト: タイトルの先頭（-・_の前）で一括り。life/work どちらも同じルール。
                     project = _infer_project(clean_title)
                     priority_rank, priority_label = _extract_task_priority(clean_title, meta)
-                    # CLI 成功/失敗 = work_canon_runner のマーカー。成功=<stem>.txt / 失敗=<stem>.failed.txt
                     marker_dir = BASE_DIR / "logs" / "canon_run_markers"
                     cli_executed = (marker_dir / f"{f.stem}.txt").exists() if marker_dir.exists() else False
                     cli_failed = (marker_dir / f"{f.stem}.failed.txt").exists() if marker_dir.exists() else False
+
+                    context, last_run = _extract_task_context(f, marker_dir)
+
                     tasks.append({
                         "id": f.name,
                         "title": clean_title,
@@ -1233,6 +1487,9 @@ async def manual_task_sync():
                         "project": project,
                         "priority_rank": priority_rank,
                         "priority_label": priority_label,
+                        "context": context,
+                        "last_run": last_run,
+                        "_meta": meta,
                     })
 
     # 協議メモ: tech 時は work/inbox のみ、life 時は従来の inbox
@@ -1259,8 +1516,148 @@ async def manual_task_sync():
                 "priority_label": priority_label,
             })
 
-    await broadcast_ws({"type": "tasks", "tasks": tasks})
-    # Also broadcast metrics
+    # done/ から直近 24h の完了タスクを取得
+    done_tasks = []
+    for domain in domains_to_scan:
+        done_dir = gtd_dir / domain / "done"
+        if done_dir.exists():
+            import time as _time
+            cutoff = _time.time() - 86400
+            for f in sorted(done_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
+                if f.name == "README.md":
+                    continue
+                try:
+                    mtime = f.stat().st_mtime
+                except Exception:
+                    continue
+                if mtime < cutoff:
+                    break
+                done_tasks.append({
+                    "id": f.name,
+                    "title": f.stem,
+                    "category": "done_recent",
+                    "is_work": (domain == "work"),
+                    "folder": "done",
+                    "cli_executed": True,
+                    "cli_failed": False,
+                    "evaluated": True,
+                    "project": _infer_project(f.stem),
+                    "priority_rank": 999,
+                    "priority_label": "",
+                    "completed_at": datetime.fromtimestamp(mtime).strftime("%m/%d %H:%M"),
+                })
+                if len(done_tasks) >= 15:
+                    break
+
+    # --- 先回りアイテムを追加 ---
+    proactive = _scan_proactive_items()
+    existing_ids = {t["id"] for t in tasks}
+    for p in proactive:
+        if p["id"] not in existing_ids:
+            tasks.append(p)
+
+    # --- 分類方針 ---
+    # canon_executable=true → Canon CLI タスク。実行済なら Canon 側、失敗なら「あなたの番」
+    # canon_executable=false/未設定 → あなたがやるタスク → 「あなたの番」に出す
+    # ただし infer_*, auto_* は Canon 内部タスクなので非表示
+    visible_tasks = []
+    canon_autonomous = 0
+    canon_cli_done = 0
+    canon_running = 0
+    canon_failed = 0
+
+    for t in tasks:
+        t["is_internal"] = t["id"].startswith("infer_") or t["id"].startswith("auto_")
+        # frontmatter の canon_executable を判定（proactive は別経路で lane 設定済み）
+        _meta = t.get("_meta", {})
+        _is_canon_exec = str(_meta.get("canon_executable", "")).lower() in ("true", "yes", "1")
+
+        if t.get("lane") == "your_turn":
+            visible_tasks.append(t)
+        elif t.get("cli_failed"):
+            t["lane"] = "your_turn"
+            reason = _extract_failure_reason(t["id"].replace(".md", ""))
+            t["action_hint"] = "Canon 実行失敗"
+            t["failure_reason"] = reason
+            canon_failed += 1
+            visible_tasks.append(t)
+        elif t["category"] == "user_decision":
+            t["lane"] = "your_turn"
+            t["action_hint"] = "あなたの判断が必要"
+            visible_tasks.append(t)
+        elif t["category"] == "user_running":
+            t["lane"] = "your_turn"
+            t["action_hint"] = "あなたが対応中"
+            visible_tasks.append(t)
+        elif t.get("cli_executed"):
+            canon_cli_done += 1
+        elif t["category"] == "ego_running":
+            canon_running += 1
+        elif t["is_internal"]:
+            canon_autonomous += 1
+        else:
+            t["lane"] = "your_turn"
+            if not _is_canon_exec:
+                t["action_hint"] = "あなたの対応が必要"
+            else:
+                t["action_hint"] = ""
+            visible_tasks.append(t)
+
+    for t in done_tasks:
+        t["lane"] = "canon_output"
+        t["is_internal"] = False
+        t["action_hint"] = ""
+
+    all_tasks = visible_tasks + done_tasks
+
+    canon_summary = {
+        "cli_done": canon_cli_done,
+        "running": canon_running,
+        "autonomous": canon_autonomous,
+        "failed": canon_failed,
+    }
+
+    # --- cross-source-dashboard.json があればそちらを優先表示 ---
+    dashboard_json = BASE_DIR / ".agent" / "gtd" / "work" / "cross-source-dashboard.json"
+    dashboard_tasks = None
+    sub_lane_labels = {}
+    if dashboard_json.exists():
+        try:
+            age_sec = (datetime.now().timestamp() - dashboard_json.stat().st_mtime)
+            if age_sec < 7200:  # 2時間以内なら有効
+                with open(dashboard_json, "r", encoding="utf-8") as _f:
+                    dash = json.load(_f)
+                dashboard_tasks = dash.get("tasks", [])
+                sub_lane_labels = dash.get("sub_lane_labels", {})
+        except Exception as e:
+            log.warning(f"cross-source-dashboard read failed: {e}")
+
+    if dashboard_tasks is not None:
+        for dt in dashboard_tasks:
+            dt["lane"] = "your_turn"
+            dt["is_internal"] = False
+            dt["is_work"] = True
+            if not dt.get("action_hint"):
+                dt["action_hint"] = sub_lane_labels.get(dt.get("sub_lane", ""), "")
+        canon_dash_tasks = dash.get("canon_tasks", []) if dash else []
+        canon_summary["queue"] = len(canon_dash_tasks)
+        canon_summary["queue_titles"] = [t["title"] for t in canon_dash_tasks[:10]]
+        canon_summary["weekly_summary"] = dash.get("weekly_summary", [])
+        canon_summary["weekly_you"] = dash.get("weekly_you_count", 0)
+        canon_summary["weekly_canon"] = dash.get("weekly_canon_count", 0)
+        final_tasks = dashboard_tasks + done_tasks
+        your_turn_count = len(dashboard_tasks)
+    else:
+        final_tasks = visible_tasks + done_tasks
+        your_turn_count = sum(1 for t in final_tasks if t.get("lane") == "your_turn")
+
+    await broadcast_ws({
+        "type": "tasks",
+        "tasks": final_tasks,
+        "lane_counts": {"your_turn": your_turn_count, "canon_output": len(done_tasks)},
+        "canon_summary": canon_summary,
+        "sub_lane_labels": sub_lane_labels,
+    })
     await broadcast_ws({"type": "metrics", "metrics": SESSION_METRICS})
 
 

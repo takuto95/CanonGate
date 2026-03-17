@@ -1624,7 +1624,7 @@ async def _manual_task_sync_inner():
     if dashboard_json.exists():
         try:
             age_sec = (datetime.now().timestamp() - dashboard_json.stat().st_mtime)
-            if age_sec < 7200:  # 2時間以内なら有効
+            if age_sec < 86400:  # 24時間以内なら有効（ALE 更新頻度に合わせて緩和）
                 with open(dashboard_json, "r", encoding="utf-8") as _f:
                     dash = json.load(_f)
                 dashboard_tasks = dash.get("tasks", [])
@@ -1633,20 +1633,28 @@ async def _manual_task_sync_inner():
             log.warning(f"cross-source-dashboard read failed: {e}")
 
     if dashboard_tasks is not None:
+        _your_lanes = {"urgent", "this_week"}
+        _your_turn_tasks = []
         for dt in dashboard_tasks:
-            dt["lane"] = "your_turn"
+            sl = dt.get("sub_lane", "")
+            dt["lane"] = "your_turn" if sl in _your_lanes else "_canon"
             dt["is_internal"] = False
             dt["is_work"] = True
             if not dt.get("action_hint"):
-                dt["action_hint"] = sub_lane_labels.get(dt.get("sub_lane", ""), "")
+                dt["action_hint"] = sub_lane_labels.get(sl, "")
+            if sl in _your_lanes:
+                _your_turn_tasks.append(dt)
         canon_dash_tasks = dash.get("canon_tasks", []) if dash else []
-        canon_summary["queue"] = len(canon_dash_tasks)
+        # team_watch/projects/low_priority/waiting は Canon 側カウントに含める
+        _bg_count = len([dt for dt in dashboard_tasks if dt.get("sub_lane") not in _your_lanes])
+        canon_summary["queue"] = len(canon_dash_tasks) + _bg_count
         canon_summary["queue_titles"] = [t["title"] for t in canon_dash_tasks[:10]]
         canon_summary["weekly_summary"] = dash.get("weekly_summary", [])
         canon_summary["weekly_you"] = dash.get("weekly_you_count", 0)
         canon_summary["weekly_canon"] = dash.get("weekly_canon_count", 0)
+        canon_summary["projects_overview"] = dash.get("projects_overview", [])
         final_tasks = dashboard_tasks + done_tasks
-        your_turn_count = len(dashboard_tasks)
+        your_turn_count = len(_your_turn_tasks)
     else:
         final_tasks = visible_tasks + done_tasks
         your_turn_count = sum(1 for t in final_tasks if t.get("lane") == "your_turn")

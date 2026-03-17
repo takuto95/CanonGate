@@ -26,7 +26,7 @@
     </header> 
     -->
 
-    <div class="hud-main-layout">
+    <div class="hud-main-layout task-panel-closed">
       <!-- Left: Intelligence Stream -->
       <button class="panel-toggle-btn left-toggle" id="leftToggleBtn" onclick="toggleLeftPanel()"
         title="チャット表示/非表示">▶</button>
@@ -118,12 +118,6 @@
 
                 #taskDashContent.dashboard-tab-auto .lane-your-turn,
                 #taskDashContent.dashboard-tab-auto .weekly-summary {
-                  display: none !important;
-                }
-
-                #taskDashContent.dashboard-tab-manage .lane-your-turn,
-                #taskDashContent.dashboard-tab-manage .lane-canon-output,
-                #taskDashContent.dashboard-tab-manage .weekly-summary {
                   display: none !important;
                 }
               </style>
@@ -351,9 +345,10 @@
       }
     }
 
-    const SUB_LANE_ORDER = ['urgent', 'this_week', 'projects', 'adr', 'slack', 'waiting', 'canon_queue', 'low_priority'];
+    const SUB_LANE_ORDER = ['urgent','this_week','team_watch','projects','adr','slack','waiting','canon_queue','low_priority'];
     const SUB_LANE_DEFAULTS = {
-      urgent: '\u{1F534} 火急', this_week: '\u{1F7E1} 今週やること', projects: '\u{1F4CA} プロジェクト進行',
+      urgent: '\u{1F534} 火急（自分対応）', this_week: '\u{1F7E1} 今週やること（自分対応）',
+      team_watch: '\u{1F465} チーム状況（PM確認）', projects: '\u{1F4CA} プロジェクト進行',
       adr: '\u{1F4CB} ADR 未協議', slack: '\u{1F4AC} Slack 未確認', waiting: '\u23F3 待ち状態',
       canon_queue: '\u{1F916} Canon 処理中/予定', low_priority: '\u{1F4DD} 確認任意'
     };
@@ -453,7 +448,7 @@
         SUB_LANE_ORDER.forEach(sl => {
           if (!groups[sl] || groups[sl].length === 0) return;
           const label = labels[sl] || sl;
-          const collapsed = (sl === 'canon_queue' || sl === 'low_priority' || sl === 'waiting');
+          const collapsed = (sl === 'canon_queue' || sl === 'low_priority' || sl === 'waiting' || sl === 'team_watch' || sl === 'projects');
           html += `<div class="sub-lane-group${collapsed ? ' collapsed' : ''}" data-sub-lane="${sl}">`;
           html += `<div class="sub-lane-header" onclick="this.parentElement.classList.toggle('collapsed')">`
             + `<span class="sub-lane-label">${escapeHtml(label)}</span>`
@@ -592,6 +587,30 @@
           }
         }
         html += '</div></div>';
+
+        // ③ PJ 2week アクティビティ（projects_overview from dashboard.json）
+        const pjOverview = lastCanonSummary.projects_overview || [];
+        if (pjOverview.length > 0) {
+          html += '<div class="lane"><div class="lane-header">📊 PJ 2week アクティビティ</div>';
+          html += '<div style="padding:10px; font-size:11px;">';
+          const heatIcon = {high:'🔴', medium:'🟡', low:'🟠', frozen:'⚪'};
+          pjOverview.forEach(pj => {
+            const icon = heatIcon[pj.heat] || '⚪';
+            const bar = pj.total > 0 ? Math.min(Math.round((pj.recent_2w / pj.total) * 100), 100) : 0;
+            html += `<div style="margin-bottom:8px; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px;">`
+              + `<div style="display:flex; justify-content:space-between; align-items:center;">`
+              + `<span style="font-weight:bold;">${icon} ${escapeHtml(pj.name)}</span>`
+              + `<span style="opacity:0.6; font-size:10px;">${pj.recent_2w}/${pj.total} (2w)</span>`
+              + `</div>`
+              + `<div style="background:rgba(255,255,255,0.05); border-radius:3px; height:4px; margin:3px 0;">`
+              + `<div style="background:${pj.heat==='high'?'#f44':pj.heat==='medium'?'#ff9d00':'#666'}; width:${bar}%; height:100%; border-radius:3px;"></div>`
+              + `</div>`
+              + `<div style="opacity:0.7; font-size:10px;">${escapeHtml(pj.status)} — ${escapeHtml(pj.leads)}</div>`
+              + `</div>`;
+          });
+          html += '</div></div>';
+        }
+
         html += '</div>';
       }
 

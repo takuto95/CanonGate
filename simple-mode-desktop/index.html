@@ -28,7 +28,8 @@
 
     <div class="hud-main-layout">
       <!-- Left: Intelligence Stream -->
-      <button class="panel-toggle-btn left-toggle" id="leftToggleBtn" onclick="toggleLeftPanel()" title="チャット表示/非表示">▶</button>
+      <button class="panel-toggle-btn left-toggle" id="leftToggleBtn" onclick="toggleLeftPanel()"
+        title="チャット表示/非表示">▶</button>
       <aside class="hud-wing left-wing panel-hidden" id="leftPanel">
         <div style="font-size: 10px; opacity: 0.5; letter-spacing: 2px; margin-bottom: 15px;">INTELLIGENCE_STREAM</div>
         <div class="stream-filters">
@@ -59,7 +60,8 @@
           <div style="display: flex; align-items: center; gap: 15px; width: 100%;">
             <button class="voice-btn mic-btn" id="voiceBtn" title="Canonの声 On/Off">
               <svg viewBox="0 0 24 24" id="voiceBtnSvg">
-                <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+                <path
+                  d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
               </svg>
             </button>
             <button class="mic-btn" id="micBtn">
@@ -97,17 +99,45 @@
           </div>
         </div>
         <div id="taskPanelContent" class="collapsible-content">
-        <div class="task-panel-inner">
-        <div id="taskDash" style="flex: 1; display: flex; flex-direction: column; gap: 12px; overflow-y: auto;">
-          <div id="taskDashContent"></div>
-        </div>
-        </div>
+          <div class="task-panel-inner">
+            <!-- Dashboard Tabs (ADR-0185) -->
+            <div class="dashboard-tabs"
+              style="display: flex; gap: 4px; margin-bottom: 8px; border-bottom: 1px solid rgba(0,255,255,0.1); padding-bottom: 6px;">
+              <button class="filter-btn active" id="tab-focus" onclick="switchDashboardTab('focus')"
+                style="font-size: 11px; padding: 3px 8px;">🎯 集中</button>
+              <button class="filter-btn" id="tab-auto" onclick="switchDashboardTab('auto')"
+                style="font-size: 11px; padding: 3px 8px;">🤖 AI</button>
+              <button class="filter-btn" id="tab-manage" onclick="switchDashboardTab('manage')"
+                style="font-size: 11px; padding: 3px 8px;">🛡️ 監視</button>
+            </div>
+            <div id="taskDash" style="flex: 1; display: flex; flex-direction: column; gap: 12px; overflow-y: auto;">
+              <style>
+                #taskDashContent.dashboard-tab-focus .lane-canon-output {
+                  display: none !important;
+                }
+
+                #taskDashContent.dashboard-tab-auto .lane-your-turn,
+                #taskDashContent.dashboard-tab-auto .weekly-summary {
+                  display: none !important;
+                }
+
+                #taskDashContent.dashboard-tab-manage .lane-your-turn,
+                #taskDashContent.dashboard-tab-manage .lane-canon-output,
+                #taskDashContent.dashboard-tab-manage .weekly-summary {
+                  display: none !important;
+                }
+              </style>
+              <div id="taskDashContent" class="dashboard-tab-focus"></div>
+            </div>
+          </div>
         </div>
       </aside>
       <!-- Tabs on right edge when panel is closed -->
       <div class="right-edge-tabs" id="rightEdgeTabs">
-        <button type="button" class="task-panel-tab" id="task-panel-tab" onclick="toggleTaskPanel(true)" aria-label="タスクパネルを開く">MISSION</button>
-        <button type="button" class="task-panel-tab notif-tab" id="bottomPanelTab" onclick="toggleBottomPanel()" aria-label="通知パネルを開く">
+        <button type="button" class="task-panel-tab" id="task-panel-tab" onclick="toggleTaskPanel(true)"
+          aria-label="タスクパネルを開く">MISSION</button>
+        <button type="button" class="task-panel-tab notif-tab" id="bottomPanelTab" onclick="toggleBottomPanel()"
+          aria-label="通知パネルを開く">
           <span>NOTIFICATION</span>
           <span class="bottom-tab-badge" id="notifBadge" style="display:none;">0</span>
         </button>
@@ -119,8 +149,10 @@
       <div class="bottom-panel-header">
         <span style="font-size: 10px; opacity: 0.5; letter-spacing: 2px;">NOTIFICATION_STREAM</span>
         <div style="display:flex; gap:12px; align-items:center;">
-          <button onclick="clearNotifications()" style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:10px;">クリア</button>
-          <button onclick="toggleBottomPanel()" style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:12px;">✕</button>
+          <button onclick="clearNotifications()"
+            style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:10px;">クリア</button>
+          <button onclick="toggleBottomPanel()"
+            style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:12px;">✕</button>
         </div>
       </div>
       <div class="bottom-panel-content" id="notifContent"></div>
@@ -232,7 +264,7 @@
         workMode = true;
         _workModeAutoDetected = true;
       }
-    } catch(e) {}
+    } catch (e) { }
     function _syncFilterButtons() {
       var bw = document.getElementById('btn-work');
       var bp = document.getElementById('btn-private');
@@ -303,10 +335,23 @@
       const container = document.getElementById('taskDashContent');
       if (!container) return;
       try { _renderTasksInner(tasks, container); }
-      catch(e) { console.error('renderTasks error:', e); container.innerHTML = '<div style="color:#f44;padding:12px;">表示エラー: ' + e.message + '</div>'; }
+      catch (e) { console.error('renderTasks error:', e); container.innerHTML = '<div style="color:#f44;padding:12px;">表示エラー: ' + e.message + '</div>'; }
     }
 
-    const SUB_LANE_ORDER = ['urgent','this_week','projects','adr','slack','waiting','canon_queue','low_priority'];
+    let currentDashTab = 'focus';
+    function switchDashboardTab(tab) {
+      currentDashTab = tab;
+      document.querySelectorAll('.dashboard-tabs .filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.id === 'tab-' + tab);
+      });
+      const content = document.getElementById('taskDashContent');
+      if (content) {
+        content.className = 'dashboard-tab-' + tab;
+        renderTasks(lastTasks); // Re-render content dynamically
+      }
+    }
+
+    const SUB_LANE_ORDER = ['urgent', 'this_week', 'projects', 'adr', 'slack', 'waiting', 'canon_queue', 'low_priority'];
     const SUB_LANE_DEFAULTS = {
       urgent: '\u{1F534} 火急', this_week: '\u{1F7E1} 今週やること', projects: '\u{1F4CA} プロジェクト進行',
       adr: '\u{1F4CB} ADR 未協議', slack: '\u{1F4AC} Slack 未確認', waiting: '\u23F3 待ち状態',
@@ -317,7 +362,7 @@
       const hint = escapeHtml(t.action_hint || getPhaseLabel(t.category) || '');
       const hintClass = t.cli_failed ? 'action-failed'
         : t.sub_lane === 'urgent' ? 'action-failed'
-        : (t.category === 'user_decision' ? 'action-decision' : 'action-review');
+          : (t.category === 'user_decision' ? 'action-decision' : 'action-review');
       const ctx = t.context ? escapeHtml(t.context) : '';
       const srcUrl = t.source_url || '';
       const run = t.last_run ? escapeHtml(t.last_run) : '';
@@ -363,7 +408,7 @@
         const youItems = ws.filter(w => w.who === '\u3042\u306A\u305F');
         const canonItems = ws.filter(w => w.who === 'Canon');
         youItems.forEach((w, i) => {
-          html += `<div class="weekly-item weekly-you"><span class="weekly-num">${i+1}</span><span class="weekly-title">${escapeHtml(w.title)}</span></div>`;
+          html += `<div class="weekly-item weekly-you"><span class="weekly-num">${i + 1}</span><span class="weekly-title">${escapeHtml(w.title)}</span></div>`;
         });
         if (canonItems.length > 0) {
           html += `<div class="weekly-divider">Canon \u304C\u51E6\u7406 (${canonItems.length}\u4EF6)</div>`;
@@ -470,10 +515,90 @@
       html += '</div>';
 
       html += '</div>';
+
+      if (currentDashTab === 'manage') {
+        const typeMap = { '定例': [], 'プログラミング/PJ': [], 'スポット/その他': [] };
+        const ownerMap = { 'tact': [], 'canon': [], 'member': [] };
+
+        filtered.forEach(t => {
+          const title = (t.title || '').toLowerCase();
+          const folder = (t.folder || '').toLowerCase();
+          const tags = Array.isArray(t.tags) ? t.tags.map(tg => (typeof tg === 'string' ? tg : tg.name || '').toLowerCase()) : [];
+
+          let tType = 'スポット/その他';
+          if (title.includes('定例') || title.includes('定期') || folder.includes('routine') || tags.includes('定例') || tags.includes('routine')) {
+            tType = '定例';
+          } else if (t.project || folder.includes('pj') || folder.includes('プロジェクト') || folder.includes('開発') || tags.includes('pj') || tags.includes('project')) {
+            tType = 'プログラミング/PJ';
+          }
+
+          let owner = 'member';
+          if (t.lane === 'your_turn') owner = 'tact';
+          else if (t.lane === '_canon' || title.includes('🤖') || title.includes('canon') || tags.includes('canon') || tags.includes('ai')) {
+            owner = 'canon';
+          }
+
+          const item = { ...t, type: tType, owner: owner };
+          typeMap[tType].push(item);
+          ownerMap[owner].push(item);
+        });
+
+        html = '<div class="lane-container manage-view" style="display:flex; flex-direction:column; gap:12px;">';
+
+        // ① オーナー別ステータスボード（ボール保持者）
+        html += '<div class="lane"><div class="lane-header">👥 ステータス総合（ボール保持者）</div><div style="padding:12px; font-size:11px; display:flex; flex-direction:column; gap:10px;">';
+
+        // タクト
+        const tactWait = ownerMap['tact'].filter(t => t.category === 'user_decision' || t.category === 'user_running');
+        html += `<div style="border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px;">`
+          + `<span style="color:#ff9d00; font-weight:bold; font-size:12px;">🙋‍♂️ タクトさん対応待ち (${tactWait.length}件)</span>`
+          + `<div style="padding-left:14px; margin-top:4px; opacity:0.8; display:flex; flex-direction:column; gap:2px;">`;
+        if (tactWait.length > 0) {
+          tactWait.slice(0, 3).forEach(i => html += `<div>・ ${escapeHtml(i.title)}</div>`);
+          if (tactWait.length > 3) html += `<div style="font-size:10px; opacity:0.5;">他 ${tactWait.length - 3} 件...</div>`;
+        } else html += '<div style="opacity:0.6;">(現在ありません)</div>';
+        html += '</div></div>';
+
+        // カノン
+        const canonActive = ownerMap['canon'].filter(t => t.lane === '_canon');
+        html += `<div style="border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px;">`
+          + `<span style="color:var(--neon-cyan); font-weight:bold; font-size:12px;">🤖 カノン自動実行中 (${canonActive.length}件)</span>`
+          + `<div style="padding-left:14px; margin-top:4px; opacity:0.8; display:flex; flex-direction:column; gap:2px;">`;
+        if (canonActive.length > 0) {
+          canonActive.slice(0, 3).forEach(i => html += `<div>・ ${escapeHtml(i.title)}</div>`);
+          if (canonActive.length > 3) html += `<div style="font-size:10px; opacity:0.5;">他 ${canonActive.length - 3} 件...</div>`;
+        } else html += '<div style="opacity:0.6;">(待機中)</div>';
+        html += '</div></div>';
+
+        // メンバー
+        const defaultMember = ownerMap['member'] || [];
+        html += `<div><span style="font-weight:bold;">👥 メンバー対応中 (${defaultMember.length}件)</span></div>`;
+        html += '</div></div>';
+
+        // ② タスク種別・プロジェクト俯瞰
+        html += '<div class="lane"><div class="lane-header">🗂️ 種別・プロジェクト俯瞰</div><div style="padding:10px; font-size:11px;">';
+
+        for (const [key, items] of Object.entries(typeMap)) {
+          if (items.length > 0) {
+            html += `<div style="margin-bottom:10px;">`
+              + `<div style="font-weight:bold; color:var(--neon-cyan); font-size:12px; margin-bottom:4px; border-bottom:1px solid rgba(0,255,255,0.15)">■ ${key} (${items.length}件)</div>`
+              + `<div style="padding-left:8px; display:flex; flex-direction:column; gap:4px;">`;
+            items.slice(0, 3).forEach(i => {
+              const oBadge = i.owner === 'tact' ? '<span style="color:#ff9d00">[私]</span>' : (i.owner === 'canon' ? '<span style="color:var(--neon-cyan)">[AI]</span>' : '[他]');
+              html += `<div style="opacity:0.9;">${oBadge} ${escapeHtml(i.title)}</div>`;
+            });
+            if (items.length > 3) html += `<div style="font-size:10px; opacity:0.5;">他 ${items.length - 3} 件...</div>`;
+            html += `</div></div>`;
+          }
+        }
+        html += '</div></div>';
+        html += '</div>';
+      }
+
       container.innerHTML = html;
 
       container.querySelectorAll('.task-row-clickable').forEach(tr => {
-        tr.addEventListener('click', function() {
+        tr.addEventListener('click', function () {
           const id = this.getAttribute('data-task-id');
           const cat = this.getAttribute('data-category');
           const isWork = this.getAttribute('data-is-work') === 'true';

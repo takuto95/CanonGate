@@ -35,6 +35,7 @@ import io
 
 from canvas_server import start_canvas_server
 from google_calendar_notifier import GoogleCalendarNotifier
+from daily_dashboard_aggregator import DailyDashboardAggregator
 
 # Windows: CP932 で表現できない文字で print が落ちないよう stdout/stderr を UTF-8 に
 if sys.platform == "win32":
@@ -290,6 +291,7 @@ def update_avg_metric(key, new_val):
 WS_PORT = int(os.getenv("WS_PORT", "8082"))
 WS_HOST = os.getenv("WS_HOST", "0.0.0.0")  # 0.0.0.0 for remote access (Xiaomi etc.)
 CONNECTED_CLIENTS = set()
+_daily_dashboard: "DailyDashboardAggregator | None" = None  # ADR-0192
 
 # Hallucination Filter
 HALLUCINATION_PHRASES = [
@@ -466,6 +468,10 @@ async def ws_handler(websocket):
                     log.info("UI Requested manual task refresh.")
                     # 先に state-tech を更新してからタスク同期（Canon work と表示の一致を保つ）
                     asyncio.create_task(_refresh_tasks_with_state_tech_sync())
+                elif data.get("type") == "refresh_timeline":
+                    log.info("UI Requested timeline refresh.")
+                    if _daily_dashboard is not None:
+                        asyncio.create_task(_daily_dashboard.refresh())
                 elif data.get("type") == "mute":
                     global MUTED
                     MUTED = data.get("value", False)
@@ -1837,6 +1843,22 @@ async def main_async():
     )
     asyncio.create_task(calendar_notifier.run(notify_calendar_event))
     _canongate_log_dir.mkdir(exist_ok=True)  # ensure logs dir exists for heartbeat
+
+    # ADR-0192: Daily Dashboard Aggregator
+    global _daily_dashboard
+    if os.getenv("DAILY_DASHBOARD_ENABLED", "true").lower() in ("1", "true", "yes", "on"):
+        _daily_dashboard = DailyDashboardAggregator(
+            calendar_notifier=calendar_notifier,
+            canon_base_dir=BASE_DIR,
+            logger=log,
+            broadcast_callback=broadcast_ws,
+            work_start=os.getenv("DAILY_DASHBOARD_WORK_START", "09:00"),
+            work_end=os.getenv("DAILY_DASHBOARD_WORK_END", "20:00"),
+            task_check_seconds=int(os.getenv("DAILY_DASHBOARD_TASK_CHECK_SECONDS", "5")),
+            state_check_seconds=int(os.getenv("DAILY_DASHBOARD_STATE_CHECK_SECONDS", "30")),
+        )
+        asyncio.create_task(_daily_dashboard.run())
+        log.info("Daily Dashboard aggregator started (ADR-0192).")
     
     # Phase 4: Start LiveCanvas server
     canvas_dir = SCRIPT_DIR / "canvas"

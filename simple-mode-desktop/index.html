@@ -109,6 +109,8 @@
                 style="font-size: 11px; padding: 3px 8px;">🤖 AI</button>
               <button class="filter-btn" id="tab-manage" onclick="switchDashboardTab('manage')"
                 style="font-size: 11px; padding: 3px 8px;">🛡️ 監視</button>
+              <button class="filter-btn" id="tab-timeline" onclick="switchDashboardTab('timeline')"
+                style="font-size: 11px; padding: 3px 8px;">📅 日程</button>
             </div>
             <div id="taskDash" style="flex: 1; display: flex; flex-direction: column; gap: 12px; overflow-y: auto;">
               <style>
@@ -120,8 +122,23 @@
                 #taskDashContent.dashboard-tab-auto .weekly-summary {
                   display: none !important;
                 }
+                /* ADR-0192: Timeline tab hides task content, shows timeline */
+                #taskDashContent.dashboard-tab-timeline .lane-your-turn,
+                #taskDashContent.dashboard-tab-timeline .lane-canon-output,
+                #taskDashContent.dashboard-tab-timeline .weekly-summary,
+                #taskDashContent.dashboard-tab-timeline .manage-board {
+                  display: none !important;
+                }
+                #timelineContainer {
+                  display: none;
+                }
+                #taskDashContent.dashboard-tab-timeline ~ #taskDash #timelineContainer,
+                .dashboard-tab-timeline #timelineContainer {
+                  display: block !important;
+                }
               </style>
               <div id="taskDashContent" class="dashboard-tab-focus"></div>
+              <div id="timelineContainer" style="display:none;"></div>
             </div>
           </div>
         </div>
@@ -339,10 +356,88 @@
         btn.classList.toggle('active', btn.id === 'tab-' + tab);
       });
       const content = document.getElementById('taskDashContent');
+      const tlContainer = document.getElementById('timelineContainer');
       if (content) {
         content.className = 'dashboard-tab-' + tab;
-        renderTasks(lastTasks); // Re-render content dynamically
+        if (tab === 'timeline') {
+          content.style.display = 'none';
+          if (tlContainer) tlContainer.style.display = 'block';
+          // Request fresh timeline data
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'refresh_timeline' }));
+          }
+        } else {
+          content.style.display = '';
+          if (tlContainer) tlContainer.style.display = 'none';
+          renderTasks(lastTasks); // Re-render content dynamically
+        }
       }
+    }
+
+    // ─── ADR-0192: Timeline Rendering ───
+    let _lastTimelineData = null;
+
+    function renderTimeline(data) {
+      _lastTimelineData = data;
+      const container = document.getElementById('timelineContainer');
+      if (!container) return;
+
+      const { date, now, timeline, tasks, summary } = data;
+
+      // Summary bar
+      let html = `<div class="tl-summary">
+        <span class="tl-date">${date}</span>
+        <span class="tl-chip tl-chip-event">${summary.total_events} 予定</span>
+        <span class="tl-chip tl-chip-task">${summary.total_tasks} タスク</span>
+        <span class="tl-chip tl-chip-free">${summary.free_minutes}分 空き</span>
+      </div>`;
+
+      // Next event alert
+      if (summary.next_event) {
+        const ne = summary.next_event;
+        const urgency = ne.minutes_until <= 10 ? 'tl-next-urgent' : '';
+        html += `<div class="tl-next-event ${urgency}">
+          次の予定: <strong>${escapeHtml(ne.title)}</strong> ${ne.start}〜 (あと${ne.minutes_until}分)
+        </div>`;
+      }
+
+      // Timeline entries
+      html += '<div class="tl-entries">';
+      for (const entry of timeline) {
+        if (entry.type === 'calendar') {
+          const isPast = now && entry.end && entry.end <= now;
+          const isCurrent = now && entry.start <= now && entry.end > now;
+          const cls = isCurrent ? 'tl-current' : (isPast ? 'tl-past' : '');
+          html += `<div class="tl-entry tl-calendar ${cls}">
+            <div class="tl-time">${entry.start}-${entry.end}</div>
+            <div class="tl-bar tl-bar-calendar"></div>
+            <div class="tl-title">${escapeHtml(entry.title)}</div>
+          </div>`;
+        } else if (entry.type === 'free_slot') {
+          html += `<div class="tl-entry tl-free">
+            <div class="tl-time">${entry.start}-${entry.end}</div>
+            <div class="tl-bar tl-bar-free"></div>
+            <div class="tl-title tl-title-free">${escapeHtml(entry.title)}</div>
+          </div>`;
+        }
+      }
+      html += '</div>';
+
+      // Task list (priority sorted)
+      if (tasks && tasks.length > 0) {
+        html += '<div class="tl-tasks-header">タスク一覧（優先度順）</div>';
+        html += '<div class="tl-tasks">';
+        for (const t of tasks) {
+          const statusCls = t.status === 'running' ? 'tl-task-running' : '';
+          const prioHtml = t.priority_label ? `<span class="tl-task-prio">${t.priority_label}</span> ` : '';
+          html += `<div class="tl-task ${statusCls}">
+            ${prioHtml}<span class="tl-task-title">${escapeHtml(t.title)}</span>
+          </div>`;
+        }
+        html += '</div>';
+      }
+
+      container.innerHTML = html;
     }
 
     const SUB_LANE_ORDER = ['urgent','this_week','team_watch','projects','adr','slack','waiting','canon_queue','low_priority'];
@@ -772,6 +867,11 @@
               voiceOn = (msg.state !== 'muted');
               updateVoiceButton();
             }
+          }
+
+          // ADR-0192: Daily Timeline
+          if (msg.type === 'daily_timeline') {
+            renderTimeline(msg);
           }
 
           if (msg.type === 'tasks') {

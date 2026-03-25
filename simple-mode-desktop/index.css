@@ -1071,3 +1071,160 @@ input:checked+.slider:before {
   font-size: 11px;
   color: #555;
 }
+
+/* ═══════════════════════════════════════════════
+   ADR-0192: Daily Timeline
+   ═══════════════════════════════════════════════ */
+
+.tl-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--glass-border);
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.tl-date {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-bright);
+  margin-right: auto;
+}
+.tl-chip {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+.tl-chip-event {
+  background: rgba(0, 243, 255, 0.12);
+  color: var(--neon-cyan);
+}
+.tl-chip-task {
+  background: rgba(255, 157, 0, 0.12);
+  color: #ff9d00;
+}
+.tl-chip-free {
+  background: rgba(0, 200, 83, 0.1);
+  color: #4caf50;
+}
+
+.tl-next-event {
+  font-size: 11px;
+  padding: 6px 10px;
+  margin-bottom: 10px;
+  background: rgba(0, 243, 255, 0.06);
+  border: 1px solid rgba(0, 243, 255, 0.15);
+  border-radius: 4px;
+  color: var(--text-bright);
+}
+.tl-next-event strong {
+  color: var(--neon-cyan);
+}
+.tl-next-urgent {
+  background: rgba(255, 68, 68, 0.08);
+  border-color: rgba(255, 68, 68, 0.3);
+}
+.tl-next-urgent strong {
+  color: #f44;
+}
+
+.tl-entries {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 14px;
+}
+.tl-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  transition: background 0.15s;
+}
+.tl-entry:hover {
+  background: rgba(0, 20, 35, 0.6);
+}
+.tl-time {
+  min-width: 80px;
+  font-size: 10px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.tl-bar {
+  width: 3px;
+  height: 18px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.tl-bar-calendar {
+  background: var(--neon-cyan);
+}
+.tl-bar-free {
+  background: rgba(0, 200, 83, 0.3);
+}
+.tl-title {
+  color: var(--text-bright);
+  font-size: 11px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tl-title-free {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+/* Past / Current event markers */
+.tl-calendar.tl-past {
+  opacity: 0.4;
+}
+.tl-calendar.tl-current {
+  background: rgba(0, 243, 255, 0.06);
+  border-left: 2px solid var(--neon-cyan);
+}
+.tl-calendar.tl-current .tl-bar-calendar {
+  background: #0f0;
+  box-shadow: 0 0 6px rgba(0, 255, 0, 0.5);
+}
+
+/* Task list in timeline */
+.tl-tasks-header {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 4px 0;
+  border-top: 1px solid var(--glass-border);
+  margin-top: 4px;
+  font-weight: 600;
+}
+.tl-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tl-task {
+  font-size: 11px;
+  padding: 4px 8px;
+  color: var(--text-bright);
+  border-radius: 3px;
+  transition: background 0.15s;
+}
+.tl-task:hover {
+  background: rgba(0, 20, 35, 0.6);
+}
+.tl-task-running {
+  border-left: 2px solid #4caf50;
+  background: rgba(0, 200, 83, 0.04);
+}
+.tl-task-prio {
+  margin-right: 4px;
+}
+.tl-task-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

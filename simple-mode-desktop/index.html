@@ -382,15 +382,48 @@
       const container = document.getElementById('timelineContainer');
       if (!container) return;
 
-      const { date, now, timeline, tasks, summary } = data;
+      const { date, now, timeline, tasks, summary, today_plan } = data;
+
+      // Briefing (today_plan)
+      let html = '';
+      if (today_plan && today_plan.briefing) {
+        html += `<div class="tl-briefing">
+          <div class="tl-briefing-icon">📋</div>
+          <div class="tl-briefing-text">${escapeHtml(today_plan.briefing)}</div>
+        </div>`;
+      }
 
       // Summary bar
-      let html = `<div class="tl-summary">
+      html += `<div class="tl-summary">
         <span class="tl-date">${date}</span>
         <span class="tl-chip tl-chip-event">${summary.total_events} 予定</span>
         <span class="tl-chip tl-chip-task">${summary.total_tasks} タスク</span>
         <span class="tl-chip tl-chip-free">${summary.free_minutes}分 空き</span>
       </div>`;
+
+      // Top 3 Tasks (today_plan)
+      if (today_plan && today_plan.top3_tasks && today_plan.top3_tasks.length > 0) {
+        html += '<div class="tl-top3-header">🎯 今日やるべき</div>';
+        html += '<div class="tl-top3">';
+        today_plan.top3_tasks.forEach((t, i) => {
+          const prio = t.priority || '';
+          html += `<div class="tl-top3-item">
+            <span class="tl-top3-num">${i + 1}</span>
+            <span class="tl-top3-prio">${prio}</span>
+            <span class="tl-top3-title">${escapeHtml(t.title)}</span>
+          </div>`;
+        });
+        html += '</div>';
+      }
+
+      // Blockers
+      if (today_plan && today_plan.blockers && today_plan.blockers.length > 0) {
+        html += '<div class="tl-blockers">';
+        today_plan.blockers.forEach(b => {
+          html += `<div class="tl-blocker-item">⛔ ${escapeHtml(b.title)}</div>`;
+        });
+        html += '</div>';
+      }
 
       // Next event alert
       if (summary.next_event) {
@@ -401,8 +434,21 @@
         </div>`;
       }
 
-      // Timeline entries
+      // Meeting prep suggestions
+      if (today_plan && today_plan.meeting_prep && today_plan.meeting_prep.length > 0) {
+        html += '<div class="tl-meeting-prep">';
+        today_plan.meeting_prep.forEach(mp => {
+          html += `<div class="tl-prep-item">
+            <div class="tl-prep-meeting">📅 ${escapeHtml(mp.meeting)} (${mp.meeting_time})</div>
+            <div class="tl-prep-tasks">準備: ${mp.prep_tasks.map(t => escapeHtml(t)).join(', ')}</div>
+          </div>`;
+        });
+        html += '</div>';
+      }
+
+      // Timeline entries with slot assignments
       html += '<div class="tl-entries">';
+      const slotAssigns = (today_plan && today_plan.slot_assignments) || [];
       for (const entry of timeline) {
         if (entry.type === 'calendar') {
           const isPast = now && entry.end && entry.end <= now;
@@ -414,18 +460,23 @@
             <div class="tl-title">${escapeHtml(entry.title)}</div>
           </div>`;
         } else if (entry.type === 'free_slot') {
+          // Check if a task is assigned to this slot
+          const assign = slotAssigns.find(a => a.slot_start === entry.start);
+          const assignHtml = assign
+            ? `<div class="tl-slot-task">→ ${assign.task_priority} ${escapeHtml(assign.suggested_task)}</div>`
+            : '';
           html += `<div class="tl-entry tl-free">
             <div class="tl-time">${entry.start}-${entry.end}</div>
             <div class="tl-bar tl-bar-free"></div>
-            <div class="tl-title tl-title-free">${escapeHtml(entry.title)}</div>
+            <div class="tl-title tl-title-free">${escapeHtml(entry.title)}${assignHtml}</div>
           </div>`;
         }
       }
       html += '</div>';
 
-      // Task list (priority sorted)
+      // Task list (priority sorted) - keep as fallback
       if (tasks && tasks.length > 0) {
-        html += '<div class="tl-tasks-header">タスク一覧（優先度順）</div>';
+        html += '<div class="tl-tasks-header">全タスク（優先度順）</div>';
         html += '<div class="tl-tasks">';
         for (const t of tasks) {
           const statusCls = t.status === 'running' ? 'tl-task-running' : '';

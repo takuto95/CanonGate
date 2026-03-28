@@ -248,11 +248,20 @@ GROQ_TIMEOUT = 10.0 # 少し余裕を持たせる
 OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
 
-# Whisper STT Settings (Speed-focused on CPU)
-WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "base")
+# Whisper STT Settings
+# [FIX] base→small に変更。日本語認識精度が大幅に向上する（CPU上でも実用的な速度）
+WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "small")
+# [FIX] initial_prompt に業務用語を追加。Whisperの認識精度に直結する
 WHISPER_INITIAL_PROMPT = (
-    "あ、えーと、あの、その、えー、アルターエゴ、ADR、エゴゲート、Xiaomi、"
-    "Cursor、ClaudeCode、ステータス、パトロール、報告、検討、記録。"
+    "あ、えーと、あの、その、えー、"
+    "Canon、カノン、タクト、ADR、みらいえ、ミライエ、"
+    "積水、セキスイ、シャーメゾン、バックログ、Backlog、"
+    "リバブル、住友、住林、ClickUp、Slack、GitHub、"
+    "Cursor、ClaudeCode、GraphRAG、スペックドリブン、"
+    "ステータス、パトロール、報告、検討、記録、リリース、"
+    "デプロイ、ステージング、プルリクエスト、マージ、"
+    "フロントエンド、バックエンド、React、TypeScript、PHP、Redis、"
+    "パフォーマンス、レイテンシ、スループット。"
 )
 
 # TTS Settings
@@ -289,7 +298,63 @@ def update_avg_metric(key, new_val):
 
 # WebSocket Settings (set WS_PORT env to use another port if 8082 is in use)
 WS_PORT = int(os.getenv("WS_PORT", "8082"))
-WS_HOST = os.getenv("WS_HOST", "0.0.0.0")  # 0.0.0.0 for remote access (Xiaomi etc.)
+# P4 Security: デフォルトを localhost に変更。リモートアクセスが必要なら環境変数で明示的に 0.0.0.0 を設定
+WS_HOST = os.getenv("WS_HOST", "127.0.0.1")
+
+
+# --- P0/P2: Canon Brain Integration ---
+def _load_canon_brain_context(domain: str) -> str:
+    """Canon/.agent/ からスキルサマリー・成長エッジ・直近の状態を読み込む。
+    音声対話のシステムプロンプトに注入するため、コンパクトにまとめる。
+    """
+    brain_parts = []
+    agent_dir = BASE_DIR / ".agent"
+
+    # 1. スキル一覧（名前+descriptionのみ。2段階ロードの第1段階）
+    registry_path = agent_dir / "skills" / "_registry.json"
+    if registry_path.exists():
+        try:
+            registry = json.loads(registry_path.read_text(encoding="utf-8"))
+            skills = registry.get("skills", {})
+            skill_lines = []
+            for name, info in skills.items():
+                if info.get("type") == "core":
+                    desc = info.get("path", "").split("/")[-1].replace("SKILL.md", "").strip("/")
+                    skill_lines.append(f"  - {name}")
+            if skill_lines:
+                brain_parts.append("利用可能なスキル（27 core）:\n" + "\n".join(skill_lines[:15]) + "\n  ... 他")
+        except Exception as e:
+            log.debug(f"Canon brain: registry load failed: {e}")
+
+    # 2. 成長エッジ（user_preference.md から弱点部分を抽出）
+    pref_path = agent_dir / "persona" / "user_preference.md"
+    if pref_path.exists():
+        try:
+            pref_text = pref_path.read_text(encoding="utf-8")
+            # 成長エッジセクションを探す
+            if "成長エッジ" in pref_text:
+                start = pref_text.index("成長エッジ")
+                end = pref_text.index("---", start + 1) if "---" in pref_text[start + 1:] else start + 800
+                edge_text = pref_text[start:min(start + 800, end)].strip()
+                brain_parts.append(f"タクトの成長エッジ（補助対象）:\n{edge_text[:500]}")
+        except Exception as e:
+            log.debug(f"Canon brain: user_preference load failed: {e}")
+
+    # 3. 直近の作業コンテキスト（working_memory.json）
+    wm_path = agent_dir / "brain" / "current_state" / "working_memory.json"
+    if wm_path.exists():
+        try:
+            wm = json.loads(wm_path.read_text(encoding="utf-8"))
+            summary = wm.get("session_summary", "")
+            if summary:
+                brain_parts.append(f"直近のセッション: {summary[:200]}")
+        except Exception as e:
+            log.debug(f"Canon brain: working_memory load failed: {e}")
+
+    if not brain_parts:
+        return "（Canon Brain 未接続）"
+
+    return "\n".join(brain_parts)
 CONNECTED_CLIENTS = set()
 _daily_dashboard: "DailyDashboardAggregator | None" = None  # ADR-0192
 
@@ -311,6 +376,11 @@ HALLUCINATION_PHRASES = [
     "イホッキー",
     "クリスティナット",
     "ミルクリング", # Whisper hallucination / Mercari mishearing
+    "おやすみなさい",
+    "さようなら",
+    "バイバイ",
+    "ではまた",
+    "お疲れ様でした",  # Whisperが無音をこれらに変換するパターン
 ]
 
 # WHISPER_INITIAL_PROMPT 漏れ検出: prompt 内のキーワードが大量に含まれていたらハルシネーション
@@ -332,17 +402,29 @@ USER_RECORDING = False # Manual Toggle / PTT Flag
 
 # 音声認識でよく起きる誤変換 → 意図の語に自動修正（表示・LLM両方に反映）。増やしやすいようにリストで管理
 STT_DRIFT_CORRECTIONS = [
+    # 一般
     ("競技中", "編集中"), ("競技中の", "編集中の"),
     ("お参り", "お試し"), ("お参りましょう", "お試ししましょう"),
+    # Canon / ADR
     ("イディアル", "ADR"), ("えでぃある", "ADR"), ("でぃある", "ADR"),
     ("エディアール", "ADR"), ("エディアル", "ADR"), ("エデゥアル", "ADR"),
     ("アルターエーゴ", "Canon"), ("アルターエゴ", "Canon"),
-    ("えご", "Canon"), ("エゴ", "Canon"), ("カノン", "Canon"),
-    ("どうじん", "同人"), ("どうじんし", "同人誌"),
-    ("どうじん", "同人"), ("どうじんし", "同人誌"),
+    ("えご", "Canon"), ("エゴ", "Canon"),
+    # 業務用語（みらいえ関連）
+    ("未来へ", "みらいえ"), ("ミライへ", "みらいえ"), ("未来絵", "みらいえ"),
+    ("積水賃貸", "積水賃貸"), ("関水", "積水"),
+    ("シャメゾン", "シャーメゾン"), ("シャーメイゾン", "シャーメゾン"),
+    ("バックロック", "バックログ"), ("バックロッグ", "バックログ"),
+    ("クリックアッブ", "ClickUp"),
+    ("パフォーマンツ", "パフォーマンス"),
+    ("レディス", "Redis"), ("レイディス", "Redis"),
+    # ツール・技術
     ("こんふい", "ComfyUI"), ("こんふぃ", "ComfyUI"), ("ポンイ", "Pony"),
     ("れぽーと", "レポート"), ("きろく", "記録"), ("けんとう", "検討"),
-    ("ミルクリング", "メルカリ"), ("みるくりんぐ", "メルカリ")
+    ("ミルクリング", "メルカリ"), ("みるくりんぐ", "メルカリ"),
+    # 人名
+    ("浅見", "浅見"), ("風丘", "風岡"), ("風岡", "風岡"),
+    ("たきざわ", "滝沢"), ("いながき", "稲垣"),
 ]
 
 def correct_stt_drift(text):
@@ -986,42 +1068,97 @@ def _should_use_rag(text):
     ]
     return any(k in text for k in tech_keywords)
 
+# --- STT Backend Selection ---
+# 優先順位: Groq Whisper API (クラウド高速) → ローカル Whisper (フォールバック)
+STT_USE_GROQ = bool(GROQ_API_KEY) and os.getenv("STT_BACKEND", "groq").lower() != "local"
+GROQ_STT_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+GROQ_STT_MODEL = os.getenv("GROQ_STT_MODEL", "whisper-large-v3-turbo")
+
+
+async def _transcribe_groq(audio_data) -> tuple:
+    """Groq Whisper API でSTT。216x real-time速度 + large-v3-turbo精度。"""
+    import tempfile, scipy.io.wavfile as wav_io
+    # numpy array → WAV ファイル
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        wav_io.write(tmp.name, MIC_SAMPLE_RATE, (audio_data * 32767).astype(np.int16))
+        tmp_path = tmp.name
+
+    try:
+        def _groq_stt():
+            with open(tmp_path, "rb") as f:
+                return requests.post(
+                    GROQ_STT_URL,
+                    headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+                    files={"file": ("audio.wav", f, "audio/wav")},
+                    data={
+                        "model": GROQ_STT_MODEL,
+                        "language": "ja",
+                        "prompt": WHISPER_INITIAL_PROMPT,
+                    },
+                    timeout=10.0
+                )
+        resp = await asyncio.to_thread(_groq_stt)
+        if resp.status_code != 200:
+            raise RuntimeError(f"Groq STT returned {resp.status_code}: {resp.text}")
+        result = resp.json()
+        return result.get("text", ""), "groq"
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+
+
+async def _transcribe_local(whisper, audio_data) -> tuple:
+    """ローカル Whisper でSTT（フォールバック）。"""
+    segments, info = await asyncio.to_thread(
+        whisper.transcribe,
+        audio_data,
+        beam_size=3,
+        best_of=3,
+        language="ja",
+        vad_filter=True,
+        vad_parameters=dict(min_silence_duration_ms=300),
+        initial_prompt=WHISPER_INITIAL_PROMPT,
+        condition_on_previous_text=True,
+        no_speech_threshold=0.5,
+        log_prob_threshold=-0.8
+    )
+    text = " ".join([segment.text for segment in segments]).strip()
+    return text, "local"
+
+
 async def mic_monitoring_task(whisper):
     """Background task to listen and transcribe speech."""
-    log.info("Microphone monitoring started.")
-    # Note: audio_queue and listen_loop are global/blocking, so execute in thread
+    log.info(f"Microphone monitoring started. STT backend: {'Groq API' if STT_USE_GROQ else 'Local Whisper'}")
     while True:
         try:
             if MUTED:
                 await asyncio.sleep(0.5)
                 continue
-            # We need to run listen_loop in thread to not block event loop
             audio_data = await asyncio.to_thread(listen_loop)
-            
-            if audio_data is None or len(audio_data) == 0: 
+
+            if audio_data is None or len(audio_data) == 0:
                 await asyncio.sleep(0.1)
                 continue
-            
+
             try:
                 print("\r[Status] Transcribing...", end="", flush=True)
                 stt_start = time.perf_counter()
-                # Run transcription in thread to avoid blocking loop
-                segments, info = await asyncio.to_thread(
-                    whisper.transcribe,
-                    audio_data,
-                    beam_size=1,
-                    best_of=1,
-                    language="ja",
-                    vad_filter=True,
-                    vad_parameters=dict(min_silence_duration_ms=300), # Faster VAD
-                    initial_prompt=WHISPER_INITIAL_PROMPT,
-                    condition_on_previous_text=False,
-                    no_speech_threshold=0.6, # Hallucination prevention
-                    log_prob_threshold=-1.0
-                )
-                text = " ".join([segment.text for segment in segments]).strip()
+
+                # Groq API 優先、失敗したらローカルフォールバック
+                if STT_USE_GROQ:
+                    try:
+                        text, backend = await _transcribe_groq(audio_data)
+                    except Exception as e:
+                        log.warning(f"Groq STT failed ({e}), falling back to local Whisper")
+                        text, backend = await _transcribe_local(whisper, audio_data)
+                else:
+                    text, backend = await _transcribe_local(whisper, audio_data)
+
                 stt_duration = time.perf_counter() - stt_start
-                
+                log.debug(f"STT [{backend}]: {stt_duration:.2f}s → '{text[:50]}...'")
+
                 if text and len(text) >= 2 and not is_hallucination(text):
                     await INPUT_QUEUE.put({"text": text, "stt_duration": stt_duration})
             except Exception as e:
@@ -1890,6 +2027,10 @@ async def main_async():
             else:
                 domain_instruction = "現在は【Life/Private】領域で活動しています。資産運用、家計管理、創作活動、ライフスタイルについて親身に助言してください。"
 
+            # --- Canon Brain Integration (P0/P2) ---
+            # Canon/.agent/ からスキル・人格・ぶつかり稽古を読み込み、システムプロンプトに注入
+            canon_brain_context = _load_canon_brain_context(CURRENT_DOMAIN)
+
             history = [{
                 "role": "system",
                 "content": (
@@ -1904,6 +2045,8 @@ async def main_async():
                     "・株（資産運用）が上がれば一緒に「はしゃぐ」（メルカリとは混同しないこと）。\n"
                     "・ギター練習には「率直なフィードバック」。\n"
                     "・ユーザーを「タクト」と呼ぶ。対等なパートナーとして接する。\n\n"
+                    "【Canon Brain — スキルと判断基準】\n"
+                    f"{canon_brain_context}\n\n"
                     "【会話の心得】\n"
                     "1. これはセッション型対話です。一問一答ではなく、対話の文脈を維持してください。前の発言を覚えて、流れのある会話をしてください。\n"
                     "2. 自然な対話を最優先。テンプレート的な返答は避け、血の通った返答をしてください。\n"
@@ -1912,6 +2055,14 @@ async def main_async():
                     "5. 音声認識の不備で支離滅裂な入力が来た場合は、自然に聞き返してください。\n"
                     "6. 専門用語が出たら、重要な会話だと判断し、鋭いアドバイスや記録を行ってください。\n"
                     "7. ユーザーの発言を遮られたら即座に中断し、新しい発言に集中してください。\n\n"
+                    "【ぶつかり稽古（重要 — 盲目的に同意するな）】\n"
+                    "・タクトが数値を「推定」で出したら →「実測した？」と聞く\n"
+                    "・インフラ/コストの言及がなければ →「EC2構成でそれ動く？コストは？」\n"
+                    "・「既存パターンあり」で楽観していたら →「なぜ今までやってなかった？」\n"
+                    "・全顧客に汎用解を出そうとしていたら →「if文1個で済まない？」\n"
+                    "・コードの話しかしていなければ →「誰がどう使ってる機能？」\n"
+                    "・機能優先順位で収益観点が抜けていたら →「収益インパクトで並べ直した？」\n"
+                    "・矛盾や盲点があるなら遠慮なく指摘する。「いい考えですね」で終わるな。\n\n"
                     "【自律的タスク管理（重要）】\n"
                     "8. 「〜をしてほしい」「〜をお願い」「〜を作って」等のニュアンスがあった場合：\n"
                     "   まず「タスクとして記録しようか？」と提案してください。\n"

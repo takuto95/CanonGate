@@ -1187,6 +1187,94 @@ input:checked+.slider:before {
   background: rgba(0, 243, 255, 0.06);
   border-left: 2px solid var(--neon-cyan);
 }
+
+/* ─── Today Plan (Briefing / Top3 / Blockers / Meeting Prep / Slot Assigns) ─── */
+.tl-briefing {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  background: linear-gradient(135deg, rgba(0, 243, 255, 0.08), rgba(0, 114, 255, 0.06));
+  border: 1px solid rgba(0, 243, 255, 0.2);
+  border-radius: 6px;
+}
+.tl-briefing-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+.tl-briefing-text { font-size: 12px; color: var(--text-bright); line-height: 1.5; }
+
+.tl-top3-header {
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--neon-cyan);
+  margin: 8px 0 4px;
+  opacity: 0.9;
+}
+.tl-top3 {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 12px;
+}
+.tl-top3-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(0, 20, 35, 0.5);
+  border-left: 3px solid var(--neon-cyan);
+  border-radius: 3px;
+  font-size: 12px;
+  color: var(--text-bright);
+}
+.tl-top3-num {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--neon-cyan);
+  min-width: 16px;
+}
+.tl-top3-prio { font-size: 12px; }
+.tl-top3-title { flex: 1; }
+
+.tl-blockers {
+  margin-bottom: 10px;
+}
+.tl-blocker-item {
+  padding: 5px 10px;
+  font-size: 11px;
+  color: #f44;
+  background: rgba(255, 68, 68, 0.06);
+  border: 1px solid rgba(255, 68, 68, 0.15);
+  border-radius: 3px;
+  margin-bottom: 3px;
+}
+
+.tl-meeting-prep {
+  margin-bottom: 10px;
+}
+.tl-prep-item {
+  padding: 6px 10px;
+  margin-bottom: 4px;
+  background: rgba(255, 193, 7, 0.06);
+  border-left: 2px solid #ffc107;
+  border-radius: 3px;
+}
+.tl-prep-meeting {
+  font-size: 11px;
+  color: var(--text-bright);
+  font-weight: 600;
+}
+.tl-prep-tasks {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.tl-slot-task {
+  font-size: 10px;
+  color: var(--neon-cyan);
+  margin-top: 2px;
+  font-weight: 600;
+}
 .tl-calendar.tl-current .tl-bar-calendar {
   background: #0f0;
   box-shadow: 0 0 6px rgba(0, 255, 0, 0.5);

@@ -543,6 +543,75 @@ class DailyDashboardAggregator:
     # Timeline construction & broadcast
     # ──────────────────────────────────────────────
 
+    def _build_today_plan(self, tasks: list[TimelineEntry], free_slots: list[TimelineEntry],
+                          calendar_events: list[TimelineEntry], now_hhmm: str) -> dict:
+        """今日やるべきことを整理して提案する。空きスロットにタスクを配置。"""
+
+        # 1. 今日の優先タスクTOP3（urgent > this_week > その他）
+        actionable = [t for t in tasks if t.status != "running"
+                      and not t.metadata.get("canon_executable")]
+        top3 = actionable[:3]
+
+        # 2. 空きスロットにタスクを仮配置
+        slot_assignments = []
+        task_idx = 0
+        for slot in free_slots:
+            if slot.start < now_hhmm:
+                continue  # 過去のスロットはスキップ
+            duration = self._slot_duration(slot)
+            if duration < 15:
+                continue
+            if task_idx < len(actionable):
+                task = actionable[task_idx]
+                slot_assignments.append({
+                    "slot_start": slot.start,
+                    "slot_end": slot.end,
+                    "slot_minutes": duration,
+                    "suggested_task": task.title,
+                    "task_priority": task.priority_label,
+                })
+                task_idx += 1
+
+        # 3. 会議前の準備タスク提案
+        meeting_prep = []
+        for ev in calendar_events:
+            if ev.start > now_hhmm:
+                # 会議名からキーワード抽出して関連タスクを探す
+                related = [t for t in tasks
+                          if any(kw in t.title for kw in ev.title.split()
+                                if len(kw) >= 2)]
+                if related:
+                    meeting_prep.append({
+                        "meeting": ev.title,
+                        "meeting_time": ev.start,
+                        "prep_tasks": [t.title for t in related[:2]],
+                    })
+
+        # 4. ブロッカー検出
+        blockers = [t for t in tasks if "待ち" in t.title or "ブロック" in t.title
+                    or "回答待ち" in t.title]
+
+        # 5. 朝のブリーフィング文
+        remaining_events = [e for e in calendar_events if e.start > now_hhmm]
+        total_free = sum(self._slot_duration(s) for s in free_slots if s.start > now_hhmm)
+        briefing = (
+            f"今日は会議{len(remaining_events)}件、"
+            f"空き時間{total_free}分、"
+            f"優先タスク{len(top3)}件。"
+        )
+        if blockers:
+            briefing += f" ブロッカー{len(blockers)}件あり。"
+        if slot_assignments:
+            briefing += f" 最初の空きは{slot_assignments[0]['slot_start']}から。"
+
+        return {
+            "top3_tasks": [{"title": t.title, "priority": t.priority_label} for t in top3],
+            "slot_assignments": slot_assignments,
+            "meeting_prep": meeting_prep,
+            "blockers": [{"title": b.title} for b in blockers],
+            "briefing": briefing,
+        }
+
     async def _rebuild_and_broadcast(self):
         try:
             # Use enhanced RRULE-aware parser
@@ -576,17 +645,22 @@ class DailyDashboardAggregator:
                     }
                     break
 
+            # 今日のプラン生成
+            today_plan = self._build_today_plan(tasks, free_slots, calendar_events, now_hhmm)
+
             message = {
                 "type": "daily_timeline",
                 "date": now.strftime("%Y-%m-%d"),
                 "now": now_hhmm,
                 "timeline": [asdict(e) for e in timeline],
                 "tasks": [asdict(t) for t in tasks],
+                "today_plan": today_plan,
                 "summary": {
                     "total_events": len(calendar_events),
                     "total_tasks": len(tasks),
                     "free_minutes": total_free,
                     "next_event": next_event,
+                    "briefing": today_plan["briefing"],
                 },
             }
 
@@ -594,7 +668,8 @@ class DailyDashboardAggregator:
             await self.broadcast(message)
             self.log.debug(
                 f"DailyDashboard broadcast: {len(calendar_events)} events, "
-                f"{len(tasks)} tasks, {len(free_slots)} free slots"
+                f"{len(tasks)} tasks, {len(free_slots)} free slots, "
+                f"plan: {len(today_plan['top3_tasks'])} top tasks"
             )
 
         except Exception as e:

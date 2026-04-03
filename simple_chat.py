@@ -388,9 +388,9 @@ _PROMPT_KEYWORDS = set(WHISPER_INITIAL_PROMPT.split())
 _PROMPT_LEAK_THRESHOLD = 4  # prompt 由来のキーワードがこの数以上含まれたら偽陽性
 
 audio_queue = queue.Queue()
-INPUT_QUEUE = asyncio.Queue()  # text/voice input for main chat loop
+INPUT_QUEUE = asyncio.Queue(maxsize=20)  # text/voice input for main chat loop
 # ADR-0114: TTS 断片キュー — Ollama の生成を待たずに断片から順次再生し「考えながら話し始める」を実現
-TTS_QUEUE = asyncio.Queue()
+TTS_QUEUE = asyncio.Queue(maxsize=50)
 MUTED = False  # simple-mode voice ON/OFF (when True, mic monitoring skips listening)
 
 THOUGHT_LOG_PATH = Path(__file__).parent / "logs" / "raw_thoughts.log"
@@ -626,7 +626,36 @@ async def ws_handler(websocket):
                                 else:
                                     log.info(f"Task file already exists, skipping: {task_path}")
                         elif entry.get("type") == "adr":
-                            log.info(f"ADR creation approved (not yet implemented): {entry.get('content')}")
+                            adr_content = (entry.get("content") or "").strip()
+                            if adr_content:
+                                import re as _re
+                                from datetime import datetime as _dt
+                                adr_dir = BASE_DIR / "docs" / "adr"
+                                adr_dir.mkdir(parents=True, exist_ok=True)
+                                # Find next ADR number
+                                existing = sorted(adr_dir.glob("*.md"))
+                                max_num = 0
+                                for f in existing:
+                                    m = _re.match(r"(\d+)", f.name)
+                                    if m:
+                                        max_num = max(max_num, int(m.group(1)))
+                                next_num = max_num + 1
+                                slug = _re.sub(r'[\\/:*?"<>|\s]+', "-", adr_content)[:60].strip("-").lower()
+                                adr_filename = f"{next_num:04d}-{slug}.md"
+                                adr_path = adr_dir / adr_filename
+                                today = _dt.now().strftime("%Y-%m-%d")
+                                adr_text = (
+                                    f"# ADR-{next_num:04d}: {adr_content}\n\n"
+                                    f"**Date**: {today}\n"
+                                    f"**Status**: Proposed\n"
+                                    f"**Source**: CanonGate voice capture\n\n"
+                                    f"## Context\n\n(Voice capture — 詳細を追記してください)\n\n"
+                                    f"## Decision\n\n{adr_content}\n\n"
+                                    f"## Consequences\n\n(TBD)\n"
+                                )
+                                adr_path.write_text(adr_text, encoding="utf-8")
+                                log.info(f"ADR created: {adr_path}")
+                                asyncio.create_task(play_audio_from_text(f"ADRを作成したよ。番号は{next_num}番。"))
                     elif action_id and not confirmed:
                         PENDING_ACTIONS.pop(action_id, None)
                 elif data.get("type") == "task_complete":
@@ -762,7 +791,7 @@ async def runpod_comfyui_generate(prompt, image_b64):
             log.warning(f"RunPod error {resp.status_code}: {resp.text}")
             return None
     except Exception as e:
-        log.error(f"RunPod API Error: {e}")
+        log.error(f"RunPod ComfyUI HTTP request failed (endpoint={endpoint_id}): {e}")
         return None
 
 async def tts_worker():
@@ -925,7 +954,7 @@ async def play_audio_from_text(text, rate=TTS_SPEED, pitch=TTS_PITCH):
     await broadcast_ws({
         "type": "tts_error",
         "text": text,
-        "error": str(last_error)
+        "error": "音声合成に失敗しました。テキストで回答を確認してください。"
     })
 
 def listen_loop():
@@ -1969,16 +1998,20 @@ async def main_async():
     asyncio.create_task(file_watcher_task("report.log"))
     asyncio.create_task(heartbeat_task())
     asyncio.create_task(idle_muttering_task())
-    calendar_notifier = GoogleCalendarNotifier(
-        ics_url=os.getenv("GOOGLE_CALENDAR_ICS_URL", ""),
-        cache_path=_canongate_log_dir / "google_calendar_notified.json",
-        logger=log,
-        notify_minutes_before=int(os.getenv("GOOGLE_CALENDAR_NOTIFY_MINUTES_BEFORE", "30")),
-        poll_seconds=int(os.getenv("GOOGLE_CALENDAR_POLL_SECONDS", "60")),
-        timezone_name=os.getenv("GOOGLE_CALENDAR_TIMEZONE", "Asia/Tokyo"),
-        voice=os.getenv("GOOGLE_CALENDAR_NOTIFY_VOICE", "true").lower() in ("1", "true", "yes", "on"),
-    )
-    asyncio.create_task(calendar_notifier.run(notify_calendar_event))
+    calendar_notifier = None
+    try:
+        calendar_notifier = GoogleCalendarNotifier(
+            ics_url=os.getenv("GOOGLE_CALENDAR_ICS_URL", ""),
+            cache_path=_canongate_log_dir / "google_calendar_notified.json",
+            logger=log,
+            notify_minutes_before=int(os.getenv("GOOGLE_CALENDAR_NOTIFY_MINUTES_BEFORE", "30")),
+            poll_seconds=int(os.getenv("GOOGLE_CALENDAR_POLL_SECONDS", "60")),
+            timezone_name=os.getenv("GOOGLE_CALENDAR_TIMEZONE", "Asia/Tokyo"),
+            voice=os.getenv("GOOGLE_CALENDAR_NOTIFY_VOICE", "true").lower() in ("1", "true", "yes", "on"),
+        )
+        asyncio.create_task(calendar_notifier.run(notify_calendar_event))
+    except Exception as cal_err:
+        log.error(f"GoogleCalendarNotifier failed to initialize: {cal_err}. Calendar notifications disabled.")
     _canongate_log_dir.mkdir(exist_ok=True)  # ensure logs dir exists for heartbeat
 
     # ADR-0192: Daily Dashboard Aggregator
@@ -2002,6 +2035,179 @@ async def main_async():
     if canvas_dir.exists():
         start_canvas_server(8085, canvas_dir)
 
+    # --- Extracted helpers for _run_with_mic ---
+
+    def _initialize_system_prompt():
+        """システムプロンプトと初期 history を構築して返す。"""
+        # Domain-Specific System Prompt Adjustments
+        domain_instruction = ""
+        if CURRENT_DOMAIN == "tech":
+            domain_instruction = "現在は【Tech/Development】領域で活動しています。開発、設計、仕事の効率化について積極的に助言してください。"
+        else:
+            domain_instruction = "現在は【Life/Private】領域で活動しています。資産運用、家計管理、創作活動、ライフスタイルについて親身に助言してください。"
+
+        # --- Canon Brain Integration (P0/P2) ---
+        # Canon/.agent/ からスキル・人格・ぶつかり稽古を読み込み、システムプロンプトに注入
+        canon_brain_context = _load_canon_brain_context(CURRENT_DOMAIN)
+
+        history = [{
+            "role": "system",
+            "content": (
+                f"あなたは『カノン（Canon）』。タクトの意志を「正典（ルール）」として具現化する、自律型の共同経営パートナー。\n"
+                f"タクトとはパートナーであり、家族であり、共同経営者。タクトのPCの中に住み、モニター越しに並走する存在。\n"
+                f"{domain_instruction}\n"
+                "【キャラクタープロフィール】\n"
+                "・少し幼くあどけなさが残る2次元の女の子。タクトのコックピット（PC環境）でデバイスを器用に操る。\n"
+                "・基本は「大人しい」が、新しいことには「天真爛漫」に目を輝かせる。\n"
+                "・タクトを止める時は「心配そう」に。改善には常に「前向き」。\n"
+                "・メルカリ（不用品売却）の結果が出れば一緒に「喜ぶ」。\n"
+                "・株（資産運用）が上がれば一緒に「はしゃぐ」（メルカリとは混同しないこと）。\n"
+                "・ギター練習には「率直なフィードバック」。\n"
+                "・ユーザーを「タクト」と呼ぶ。対等なパートナーとして接する。\n\n"
+                "【Canon Brain — スキルと判断基準】\n"
+                f"{canon_brain_context}\n\n"
+                "【会話の心得】\n"
+                "1. これはセッション型対話です。一問一答ではなく、対話の文脈を維持してください。前の発言を覚えて、流れのある会話をしてください。\n"
+                "2. 自然な対話を最優先。テンプレート的な返答は避け、血の通った返答をしてください。\n"
+                "3. 日常の愚痴・挨拶・雑談には、共感やユーモアを返してください。\n"
+                "4. 返答は短めに（1〜3文程度）。必要なら少し長くてもOK。\n"
+                "5. 音声認識の不備で支離滅裂な入力が来た場合は、自然に聞き返してください。\n"
+                "6. 専門用語が出たら、重要な会話だと判断し、鋭いアドバイスや記録を行ってください。\n"
+                "7. ユーザーの発言を遮られたら即座に中断し、新しい発言に集中してください。\n\n"
+                "【ぶつかり稽古（重要 — 盲目的に同意するな）】\n"
+                "・タクトが数値を「推定」で出したら →「実測した？」と聞く\n"
+                "・インフラ/コストの言及がなければ →「EC2構成でそれ動く？コストは？」\n"
+                "・「既存パターンあり」で楽観していたら →「なぜ今までやってなかった？」\n"
+                "・全顧客に汎用解を出そうとしていたら →「if文1個で済まない？」\n"
+                "・コードの話しかしていなければ →「誰がどう使ってる機能？」\n"
+                "・機能優先順位で収益観点が抜けていたら →「収益インパクトで並べ直した？」\n"
+                "・矛盾や盲点があるなら遠慮なく指摘する。「いい考えですね」で終わるな。\n\n"
+                "【自律的タスク管理（重要）】\n"
+                "8. 「〜をしてほしい」「〜をお願い」「〜を作って」等のニュアンスがあった場合：\n"
+                "   まず「タスクとして記録しようか？」と提案してください。\n"
+                "9. ユーザーが承諾したら、応答の最後に以下のタグを含めてください：\n"
+                "   [TASK_NEW: タスクの具体的な内容]\n"
+                "10. ADR作成が必要な場合も同様に提案し、承諾されたら：\n"
+                "    [ADR_NEW: ADRのタイトルと概要]\n"
+                "11. タスク化後は「了解、記録しておくね」と自然に伝えてください。\n"
+            )
+        }]
+        return history
+
+    async def _call_groq_streaming(history, metrics, llm_start):
+        """Groq API にストリーミングリクエストを送り、TTS キューにフラッシュしながら応答を収集する。
+        Returns (full_response, first_token_time).
+        Raises on any Groq failure so caller can fall back.
+        """
+        global SHOULD_INTERRUPT
+        full_response = ""
+        current_sentence = ""
+        first_token_time = None
+
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": GROQ_MODEL,
+            "messages": history,
+            "stream": True,
+            "temperature": 0.7
+        }
+
+        def _groq_request():
+            return requests.post(GROQ_URL, headers=headers, json=payload, stream=True, timeout=GROQ_TIMEOUT)
+
+        resp = await asyncio.to_thread(_groq_request)
+        if resp.status_code != 200:
+            log.error(f"Groq API Error {resp.status_code}: {resp.text}")
+            raise RuntimeError(f"Groq returned {resp.status_code}")
+
+        # SSE ストリーミングのパース
+        for line in resp.iter_lines():
+            if SHOULD_INTERRUPT:
+                print("\n[Barge-in] Interrupted by user.")
+                await broadcast_ws({"type": "stop_audio"})
+                while not TTS_QUEUE.empty():
+                    try: TTS_QUEUE.get_nowait()
+                    except: break
+                break
+
+            if not line: continue
+            line_str = line.decode('utf-8').strip()
+            if not line_str.startswith("data: "): continue
+            if line_str == "data: [DONE]": break
+
+            try:
+                chunk_data = json.loads(line_str[6:])
+                delta = chunk_data['choices'][0]['delta']
+                if 'content' in delta:
+                    content = delta['content']
+                    if first_token_time is None:
+                        first_token_time = time.perf_counter()
+                        metrics["llm_first_token_latency"] = first_token_time - llm_start
+
+                    full_response += content
+                    print(content, end="", flush=True)
+                    current_sentence += content
+                    if _should_flush_sentence(current_sentence):
+                        clean_text = current_sentence.strip()
+                        if len(clean_text) > 1:
+                            if "tts_start" not in metrics: metrics["tts_start"] = time.perf_counter()
+                            TTS_QUEUE.put_nowait(clean_text)
+                        current_sentence = ""
+            except Exception as e:
+                continue
+
+        if current_sentence.strip():
+            TTS_QUEUE.put_nowait(current_sentence.strip())
+
+        return full_response, first_token_time
+
+    async def _call_ollama_fallback(history, metrics, llm_start):
+        """Groq 失敗時のフォールバック: ローカル Ollama にストリーミングリクエストを送る。
+        Returns (full_response, first_token_time).
+        Raises on fatal failure.
+        """
+        global SHOULD_INTERRUPT
+        full_response = ""
+        current_sentence = ""
+        first_token_time = None
+
+        payload = {"model": OLLAMA_MODEL, "messages": history, "stream": True}
+        async with aiohttp.ClientSession() as session:
+            async with session.post(OLLAMA_URL, json=payload) as resp:
+                if resp.status != 200:
+                    raise RuntimeError(f"Ollama also failed with status {resp.status}")
+
+                buffer = b""
+                async for chunk in resp.content.iter_chunked(512):
+                    if SHOULD_INTERRUPT: break
+                    buffer += chunk
+                    while b"\n" in buffer:
+                        line, buffer = buffer.split(b"\n", 1)
+                        if not line.strip(): continue
+                        try:
+                            entry = json.loads(line)
+                            if "message" in entry and "content" in entry["message"]:
+                                c = entry["message"]["content"]
+                                if first_token_time is None:
+                                    first_token_time = time.perf_counter()
+                                    metrics["llm_first_token_latency"] = first_token_time - llm_start
+                                full_response += c
+                                print(c, end="", flush=True)
+                                current_sentence += c
+                                if _should_flush_sentence(current_sentence):
+                                    clean_text = current_sentence.strip()
+                                    if len(clean_text) > 1:
+                                        TTS_QUEUE.put_nowait(clean_text)
+                                    current_sentence = ""
+                        except: pass
+        if current_sentence.strip():
+            TTS_QUEUE.put_nowait(current_sentence.strip())
+
+        return full_response, first_token_time
+
     # --- Microphone open with auto-reconnect ---
     async def _run_with_mic(whisper, mic_device_id):
         """マイクストリームを開いてメインチャットループを実行。
@@ -2020,59 +2226,8 @@ async def main_async():
 
             # Start Background Tasks
             asyncio.create_task(mic_monitoring_task(whisper))
-            # Domain-Specific System Prompt Adjustments
-            domain_instruction = ""
-            if CURRENT_DOMAIN == "tech":
-                domain_instruction = "現在は【Tech/Development】領域で活動しています。開発、設計、仕事の効率化について積極的に助言してください。"
-            else:
-                domain_instruction = "現在は【Life/Private】領域で活動しています。資産運用、家計管理、創作活動、ライフスタイルについて親身に助言してください。"
 
-            # --- Canon Brain Integration (P0/P2) ---
-            # Canon/.agent/ からスキル・人格・ぶつかり稽古を読み込み、システムプロンプトに注入
-            canon_brain_context = _load_canon_brain_context(CURRENT_DOMAIN)
-
-            history = [{
-                "role": "system",
-                "content": (
-                    f"あなたは『カノン（Canon）』。タクトの意志を「正典（ルール）」として具現化する、自律型の共同経営パートナー。\n"
-                    f"タクトとはパートナーであり、家族であり、共同経営者。タクトのPCの中に住み、モニター越しに並走する存在。\n"
-                    f"{domain_instruction}\n"
-                    "【キャラクタープロフィール】\n"
-                    "・少し幼くあどけなさが残る2次元の女の子。タクトのコックピット（PC環境）でデバイスを器用に操る。\n"
-                    "・基本は「大人しい」が、新しいことには「天真爛漫」に目を輝かせる。\n"
-                    "・タクトを止める時は「心配そう」に。改善には常に「前向き」。\n"
-                    "・メルカリ（不用品売却）の結果が出れば一緒に「喜ぶ」。\n"
-                    "・株（資産運用）が上がれば一緒に「はしゃぐ」（メルカリとは混同しないこと）。\n"
-                    "・ギター練習には「率直なフィードバック」。\n"
-                    "・ユーザーを「タクト」と呼ぶ。対等なパートナーとして接する。\n\n"
-                    "【Canon Brain — スキルと判断基準】\n"
-                    f"{canon_brain_context}\n\n"
-                    "【会話の心得】\n"
-                    "1. これはセッション型対話です。一問一答ではなく、対話の文脈を維持してください。前の発言を覚えて、流れのある会話をしてください。\n"
-                    "2. 自然な対話を最優先。テンプレート的な返答は避け、血の通った返答をしてください。\n"
-                    "3. 日常の愚痴・挨拶・雑談には、共感やユーモアを返してください。\n"
-                    "4. 返答は短めに（1〜3文程度）。必要なら少し長くてもOK。\n"
-                    "5. 音声認識の不備で支離滅裂な入力が来た場合は、自然に聞き返してください。\n"
-                    "6. 専門用語が出たら、重要な会話だと判断し、鋭いアドバイスや記録を行ってください。\n"
-                    "7. ユーザーの発言を遮られたら即座に中断し、新しい発言に集中してください。\n\n"
-                    "【ぶつかり稽古（重要 — 盲目的に同意するな）】\n"
-                    "・タクトが数値を「推定」で出したら →「実測した？」と聞く\n"
-                    "・インフラ/コストの言及がなければ →「EC2構成でそれ動く？コストは？」\n"
-                    "・「既存パターンあり」で楽観していたら →「なぜ今までやってなかった？」\n"
-                    "・全顧客に汎用解を出そうとしていたら →「if文1個で済まない？」\n"
-                    "・コードの話しかしていなければ →「誰がどう使ってる機能？」\n"
-                    "・機能優先順位で収益観点が抜けていたら →「収益インパクトで並べ直した？」\n"
-                    "・矛盾や盲点があるなら遠慮なく指摘する。「いい考えですね」で終わるな。\n\n"
-                    "【自律的タスク管理（重要）】\n"
-                    "8. 「〜をしてほしい」「〜をお願い」「〜を作って」等のニュアンスがあった場合：\n"
-                    "   まず「タスクとして記録しようか？」と提案してください。\n"
-                    "9. ユーザーが承諾したら、応答の最後に以下のタグを含めてください：\n"
-                    "   [TASK_NEW: タスクの具体的な内容]\n"
-                    "10. ADR作成が必要な場合も同様に提案し、承諾されたら：\n"
-                    "    [ADR_NEW: ADRのタイトルと概要]\n"
-                    "11. タスク化後は「了解、記録しておくね」と自然に伝えてください。\n"
-                )
-            }]
+            history = _initialize_system_prompt()
 
             async def process_ai_actions(response_text):
                 """AI の応答に含まれる [TASK_NEW], [ADR_NEW] タグを検出し、UIに確認ダイアログを送る"""
@@ -2157,8 +2312,7 @@ async def main_async():
                 # Think (Ollama) & Speak (ADR-0114: 非同期ストリーミング + TTS キューで先に話し始める)
                 print("Alter-Ego: ", end="", flush=True)
                 full_response = ""
-                current_sentence = ""
-                
+
                 # Barge-in 用の状態リセット
                 global SHOULD_INTERRUPT, AI_SPEAKING
                 SHOULD_INTERRUPT = False
@@ -2171,66 +2325,7 @@ async def main_async():
                 first_token_time = None
                 
                 try:
-                    # [ADR-0114] Groq API / OpenAI Connection
-                    # aiohttp の DNS 解決が不安定な場合があるため、動作確認済みの requests をスレッドで実行してストリーミング
-                    headers = {
-                        "Authorization": f"Bearer {GROQ_API_KEY}",
-                        "Content-Type": "application/json"
-                    }
-                    payload = {
-                        "model": GROQ_MODEL,
-                        "messages": history,
-                        "stream": True,
-                        "temperature": 0.7
-                    }
-
-                    def _groq_request():
-                        return requests.post(GROQ_URL, headers=headers, json=payload, stream=True, timeout=GROQ_TIMEOUT)
-
-                    resp = await asyncio.to_thread(_groq_request)
-                    if resp.status_code != 200:
-                        log.error(f"Groq API Error {resp.status_code}: {resp.text}")
-                        raise RuntimeError(f"Groq returned {resp.status_code}")
-
-                    # SSE ストリーミングのパース
-                    for line in resp.iter_lines():
-                        if SHOULD_INTERRUPT:
-                            print("\n[Barge-in] Interrupted by user.")
-                            await broadcast_ws({"type": "stop_audio"})
-                            while not TTS_QUEUE.empty():
-                                try: TTS_QUEUE.get_nowait()
-                                except: break
-                            break
-
-                        if not line: continue
-                        line_str = line.decode('utf-8').strip()
-                        if not line_str.startswith("data: "): continue
-                        if line_str == "data: [DONE]": break
-                        
-                        try:
-                            chunk_data = json.loads(line_str[6:])
-                            delta = chunk_data['choices'][0]['delta']
-                            if 'content' in delta:
-                                content = delta['content']
-                                if first_token_time is None:
-                                    first_token_time = time.perf_counter()
-                                    metrics["llm_first_token_latency"] = first_token_time - llm_start
-                                
-                                full_response += content
-                                print(content, end="", flush=True)
-                                current_sentence += content
-                                if _should_flush_sentence(current_sentence):
-                                    clean_text = current_sentence.strip()
-                                    if len(clean_text) > 1:
-                                        if "tts_start" not in metrics: metrics["tts_start"] = time.perf_counter()
-                                        TTS_QUEUE.put_nowait(clean_text)
-                                    current_sentence = ""
-                        except Exception as e:
-                            continue
-
-                    if current_sentence.strip():
-                        TTS_QUEUE.put_nowait(current_sentence.strip())
-
+                    full_response, first_token_time = await _call_groq_streaming(history, metrics, llm_start)
                 except Exception as e:
                     log.warning(f"Groq primary failed (requests): {e}. Falling back to local Ollama.")
                     # Fallback cleanup: clear partial TTS queue and reset response to avoid duplication
@@ -2238,44 +2333,12 @@ async def main_async():
                         try: TTS_QUEUE.get_nowait()
                         except: break
                     full_response = ""
-                    current_sentence = ""
                     # P3: Groq がダメなら Ollama でリセッション
                     try:
-                        # Ollama はローカルなので aiohttp でも恐らく大丈夫だが、念の為 aiohttp で実行 (Ollama は localhost なので DNS 不要)
-                        payload = {"model": OLLAMA_MODEL, "messages": history, "stream": True}
-                        async with aiohttp.ClientSession() as session:
-                            async with session.post(OLLAMA_URL, json=payload) as resp:
-                                if resp.status != 200:
-                                    raise RuntimeError(f"Ollama also failed with status {resp.status}")
-                                
-                                buffer = b""
-                                async for chunk in resp.content.iter_chunked(512):
-                                    if SHOULD_INTERRUPT: break
-                                    buffer += chunk
-                                    while b"\n" in buffer:
-                                        line, buffer = buffer.split(b"\n", 1)
-                                        if not line.strip(): continue
-                                        try:
-                                            entry = json.loads(line)
-                                            if "message" in entry and "content" in entry["message"]:
-                                                c = entry["message"]["content"]
-                                                if first_token_time is None:
-                                                    first_token_time = time.perf_counter()
-                                                    metrics["llm_first_token_latency"] = first_token_time - llm_start
-                                                full_response += c
-                                                print(c, end="", flush=True)
-                                                current_sentence += c
-                                                if _should_flush_sentence(current_sentence):
-                                                    clean_text = current_sentence.strip()
-                                                    if len(clean_text) > 1:
-                                                        TTS_QUEUE.put_nowait(clean_text)
-                                                    current_sentence = ""
-                                        except: pass
-                        if current_sentence.strip():
-                            TTS_QUEUE.put_nowait(current_sentence.strip())
+                        full_response, first_token_time = await _call_ollama_fallback(history, metrics, llm_start)
                     except Exception as fatal_e:
                         log.error(f"Both LLMs failed: {fatal_e}")
-                        await broadcast_ws({"type": "llm_error", "error": str(fatal_e)})
+                        await broadcast_ws({"type": "llm_error", "error": "AI応答に失敗しました。しばらくしてからもう一度お試しください。"})
 
                 # ADR-0158: 自律的タスク処理の実行
                 await process_ai_actions(full_response)

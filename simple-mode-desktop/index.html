@@ -31,7 +31,7 @@
       <button class="panel-toggle-btn left-toggle" id="leftToggleBtn" onclick="toggleLeftPanel()"
         title="チャット表示/非表示">▶</button>
       <aside class="hud-wing left-wing panel-hidden" id="leftPanel">
-        <div style="font-size: 10px; opacity: 0.5; letter-spacing: 2px; margin-bottom: 15px;">INTELLIGENCE_STREAM</div>
+        <div style="font-size: 13px; opacity: 0.5; letter-spacing: 2px; margin-bottom: 15px;">INTELLIGENCE_STREAM</div>
         <div class="stream-filters">
           <button class="filter-btn active" onclick="setFilter('all')">全て</button>
           <button class="filter-btn" onclick="setFilter('chat')">対話</button>
@@ -48,7 +48,7 @@
           <iframe id="mascotFrame" src="../mascot-web/index.html?mode=viewer" frameborder="0" scrolling="no"
             style="width:100%; height:100%; border:none; pointer-events: none;"></iframe>
         </div>
-        <div style="font-size: 11px; letter-spacing: 4px; color: var(--neon-cyan); opacity: 0.7;">CANON_SYSTEM</div>
+        <div style="font-size: 14px; letter-spacing: 4px; color: var(--neon-cyan); opacity: 0.7;">CANON_SYSTEM</div>
         <div class="hud-command-area" style="flex-direction: column;">
           <div class="voice-wave-container" id="voiceWave">
             <div class="wave-bar"></div>
@@ -80,20 +80,20 @@
       <aside class="hud-wing right-wing">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
           <div class="section-toggle" onclick="toggleTasks()" style="margin-bottom:0;">
-            <span style="font-size: 10px; opacity: 0.5; letter-spacing: 2px;">MISSION_RADAR</span>
+            <span style="font-size: 13px; opacity: 0.5; letter-spacing: 2px;">MISSION_RADAR</span>
             <span class="toggle-arrow" id="taskToggleArrow">▼</span>
           </div>
           <div class="stream-filters" style="margin-bottom: 0; display: flex; align-items: center; gap: 8px;">
             <button class="filter-btn active" id="btn-private" onclick="setWorkFilter(false)">生活</button>
             <button class="filter-btn" id="btn-work" onclick="setWorkFilter(true)">仕事</button>
             <select id="task-sort-select" onchange="setTaskSort(this.value)"
-              style="background: rgba(0,20,30,0.9); color: var(--neon-cyan); border: 1px solid rgba(0,255,255,0.25); padding: 4px 6px; font-size: 11px;">
+              style="background: rgba(0,20,30,0.9); color: var(--neon-cyan); border: 1px solid rgba(0,255,255,0.25); padding: 4px 6px; font-size: 14px;">
               <option value="priority" selected>優先順</option>
               <option value="project">PJ順</option>
               <option value="title">名前順</option>
             </select>
             <button id="sync-btn" onclick="syncTasks()" title="SYNC_BRAIN"
-              style="background:none; border:none; color:var(--neon-cyan); cursor:pointer; font-size:12px; opacity:0.6; padding:0; display:flex; align-items:center; transition: all 0.2s;">🔄</button>
+              style="background:none; border:none; color:var(--neon-cyan); cursor:pointer; font-size:14px; opacity:0.6; padding:0; display:flex; align-items:center; transition: all 0.2s;">🔄</button>
             <button id="task-panel-close-btn" onclick="toggleTaskPanel(false)" title="パネルを閉じる"
               style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:14px; padding:0 4px; line-height:1;">◀</button>
           </div>
@@ -104,13 +104,13 @@
             <div class="dashboard-tabs"
               style="display: flex; gap: 4px; margin-bottom: 8px; border-bottom: 1px solid rgba(0,255,255,0.1); padding-bottom: 6px;">
               <button class="filter-btn active" id="tab-focus" onclick="switchDashboardTab('focus')"
-                style="font-size: 11px; padding: 3px 8px;">🎯 集中</button>
+                style="font-size: 14px; padding: 3px 8px;">🎯 集中</button>
               <button class="filter-btn" id="tab-auto" onclick="switchDashboardTab('auto')"
-                style="font-size: 11px; padding: 3px 8px;">🤖 AI</button>
+                style="font-size: 14px; padding: 3px 8px;">🤖 AI</button>
               <button class="filter-btn" id="tab-manage" onclick="switchDashboardTab('manage')"
-                style="font-size: 11px; padding: 3px 8px;">🛡️ 監視</button>
+                style="font-size: 14px; padding: 3px 8px;">🛡️ 監視</button>
               <button class="filter-btn" id="tab-timeline" onclick="switchDashboardTab('timeline')"
-                style="font-size: 11px; padding: 3px 8px;">📅 日程</button>
+                style="font-size: 14px; padding: 3px 8px;">📅 日程</button>
             </div>
             <div id="taskDash" style="flex: 1; display: flex; flex-direction: column; gap: 12px; overflow-y: auto;">
               <style>
@@ -158,12 +158,12 @@
     <!-- Notification Panel (slides up from bottom) -->
     <div class="bottom-panel" id="bottomPanel">
       <div class="bottom-panel-header">
-        <span style="font-size: 10px; opacity: 0.5; letter-spacing: 2px;">NOTIFICATION_STREAM</span>
+        <span style="font-size: 13px; opacity: 0.5; letter-spacing: 2px;">NOTIFICATION_STREAM</span>
         <div style="display:flex; gap:12px; align-items:center;">
           <button onclick="clearNotifications()"
-            style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:10px;">クリア</button>
+            style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:13px;">クリア</button>
           <button onclick="toggleBottomPanel()"
-            style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:12px;">✕</button>
+            style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:14px;">✕</button>
         </div>
       </div>
       <div class="bottom-panel-content" id="notifContent"></div>
@@ -191,10 +191,24 @@
       else hudMainLayout.classList.add('task-panel-closed');
     }
 
-    function showToast(txt) {
+    function showToast(txt, persistent) {
       toast.textContent = txt;
+      toast.classList.remove('toast-persistent');
+      // Remove any existing close button
+      const existingBtn = toast.querySelector('.toast-close');
+      if (existingBtn) existingBtn.remove();
       toast.classList.add('active');
-      setTimeout(() => toast.classList.remove('active'), 3000);
+      if (persistent) {
+        toast.classList.add('toast-persistent');
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'toast-close';
+        closeBtn.textContent = '\u2715';
+        closeBtn.style.cssText = 'background:none;border:none;color:inherit;cursor:pointer;margin-left:12px;font-size:14px;vertical-align:middle;';
+        closeBtn.onclick = () => { toast.classList.remove('active', 'toast-persistent'); };
+        toast.appendChild(closeBtn);
+      } else {
+        setTimeout(() => toast.classList.remove('active'), 3000);
+      }
     }
 
     // State labels
@@ -687,27 +701,27 @@
         html = '<div class="lane-container manage-view" style="display:flex; flex-direction:column; gap:12px;">';
 
         // ① オーナー別ステータスボード（ボール保持者）
-        html += '<div class="lane"><div class="lane-header">👥 ステータス総合（ボール保持者）</div><div style="padding:12px; font-size:11px; display:flex; flex-direction:column; gap:10px;">';
+        html += '<div class="lane"><div class="lane-header">👥 ステータス総合（ボール保持者）</div><div style="padding:12px; font-size:14px; display:flex; flex-direction:column; gap:10px;">';
 
         // タクト
         const tactWait = ownerMap['tact'].filter(t => t.category === 'user_decision' || t.category === 'user_running');
         html += `<div style="border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px;">`
-          + `<span style="color:#ff9d00; font-weight:bold; font-size:12px;">🙋‍♂️ タクトさん対応待ち (${tactWait.length}件)</span>`
+          + `<span style="color:#ff9d00; font-weight:bold; font-size:14px;">🙋‍♂️ タクトさん対応待ち (${tactWait.length}件)</span>`
           + `<div style="padding-left:14px; margin-top:4px; opacity:0.8; display:flex; flex-direction:column; gap:2px;">`;
         if (tactWait.length > 0) {
           tactWait.slice(0, 3).forEach(i => html += `<div>・ ${escapeHtml(i.title)}</div>`);
-          if (tactWait.length > 3) html += `<div style="font-size:10px; opacity:0.5;">他 ${tactWait.length - 3} 件...</div>`;
+          if (tactWait.length > 3) html += `<div style="font-size:11px; opacity:0.5;">他 ${tactWait.length - 3} 件...</div>`;
         } else html += '<div style="opacity:0.6;">(現在ありません)</div>';
         html += '</div></div>';
 
         // カノン
         const canonActive = ownerMap['canon'].filter(t => t.lane === '_canon');
         html += `<div style="border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px;">`
-          + `<span style="color:var(--neon-cyan); font-weight:bold; font-size:12px;">🤖 カノン自動実行中 (${canonActive.length}件)</span>`
+          + `<span style="color:var(--neon-cyan); font-weight:bold; font-size:14px;">🤖 カノン自動実行中 (${canonActive.length}件)</span>`
           + `<div style="padding-left:14px; margin-top:4px; opacity:0.8; display:flex; flex-direction:column; gap:2px;">`;
         if (canonActive.length > 0) {
           canonActive.slice(0, 3).forEach(i => html += `<div>・ ${escapeHtml(i.title)}</div>`);
-          if (canonActive.length > 3) html += `<div style="font-size:10px; opacity:0.5;">他 ${canonActive.length - 3} 件...</div>`;
+          if (canonActive.length > 3) html += `<div style="font-size:11px; opacity:0.5;">他 ${canonActive.length - 3} 件...</div>`;
         } else html += '<div style="opacity:0.6;">(待機中)</div>';
         html += '</div></div>';
 
@@ -717,18 +731,18 @@
         html += '</div></div>';
 
         // ② タスク種別・プロジェクト俯瞰
-        html += '<div class="lane"><div class="lane-header">🗂️ 種別・プロジェクト俯瞰</div><div style="padding:10px; font-size:11px;">';
+        html += '<div class="lane"><div class="lane-header">🗂️ 種別・プロジェクト俯瞰</div><div style="padding:10px; font-size:14px;">';
 
         for (const [key, items] of Object.entries(typeMap)) {
           if (items.length > 0) {
             html += `<div style="margin-bottom:10px;">`
-              + `<div style="font-weight:bold; color:var(--neon-cyan); font-size:12px; margin-bottom:4px; border-bottom:1px solid rgba(0,255,255,0.15)">■ ${key} (${items.length}件)</div>`
+              + `<div style="font-weight:bold; color:var(--neon-cyan); font-size:14px; margin-bottom:4px; border-bottom:1px solid rgba(0,255,255,0.15)">■ ${key} (${items.length}件)</div>`
               + `<div style="padding-left:8px; display:flex; flex-direction:column; gap:4px;">`;
             items.slice(0, 3).forEach(i => {
               const oBadge = i.owner === 'tact' ? '<span style="color:#ff9d00">[私]</span>' : (i.owner === 'canon' ? '<span style="color:var(--neon-cyan)">[AI]</span>' : '[他]');
               html += `<div style="opacity:0.9;">${oBadge} ${escapeHtml(i.title)}</div>`;
             });
-            if (items.length > 3) html += `<div style="font-size:10px; opacity:0.5;">他 ${items.length - 3} 件...</div>`;
+            if (items.length > 3) html += `<div style="font-size:11px; opacity:0.5;">他 ${items.length - 3} 件...</div>`;
             html += `</div></div>`;
           }
         }
@@ -738,7 +752,7 @@
         const pjOverview = lastCanonSummary.projects_overview || [];
         if (pjOverview.length > 0) {
           html += '<div class="lane"><div class="lane-header">📊 PJ 2week アクティビティ</div>';
-          html += '<div style="padding:10px; font-size:11px;">';
+          html += '<div style="padding:10px; font-size:14px;">';
           const heatIcon = {high:'🔴', medium:'🟡', low:'🟠', frozen:'⚪'};
           pjOverview.forEach(pj => {
             const icon = heatIcon[pj.heat] || '⚪';
@@ -746,12 +760,12 @@
             html += `<div style="margin-bottom:8px; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px;">`
               + `<div style="display:flex; justify-content:space-between; align-items:center;">`
               + `<span style="font-weight:bold;">${icon} ${escapeHtml(pj.name)}</span>`
-              + `<span style="opacity:0.6; font-size:10px;">${pj.recent_2w}/${pj.total} (2w)</span>`
+              + `<span style="opacity:0.6; font-size:11px;">${pj.recent_2w}/${pj.total} (2w)</span>`
               + `</div>`
               + `<div style="background:rgba(255,255,255,0.05); border-radius:3px; height:4px; margin:3px 0;">`
               + `<div style="background:${pj.heat==='high'?'#f44':pj.heat==='medium'?'#ff9d00':'#666'}; width:${bar}%; height:100%; border-radius:3px;"></div>`
               + `</div>`
-              + `<div style="opacity:0.7; font-size:10px;">${escapeHtml(pj.status)} — ${escapeHtml(pj.leads)}</div>`
+              + `<div style="opacity:0.7; font-size:11px;">${escapeHtml(pj.status)} — ${escapeHtml(pj.leads)}</div>`
               + `</div>`;
           });
           html += '</div></div>';
@@ -865,6 +879,8 @@
     // WebSocket Logic（ポートは Commander API から取得、未取得時は 8082）
     let ws = null;
     let wsPort = 8082;
+    let reconnectDelay = 1000;
+    let stateTimeoutId = null;
     async function connect() {
       try {
         const cfg = await fetch('http://localhost:8000/api/canon-gate-config').then(r => r.json()).catch(() => ({}));
@@ -873,6 +889,7 @@
       const url = 'ws://localhost:' + wsPort + '/ws';
       ws = new WebSocket(url);
       ws.onopen = () => {
+        reconnectDelay = 1000;
         showToast('Canon に接続しました');
         addThought('SYSTEM: Canon (音声) に接続しました');
       };
@@ -898,6 +915,15 @@
             } else {
               avatarFrame.classList.remove('speaking');
               avatarFrame.classList.remove('thinking');
+            }
+            // State timeout recovery: reset to idle after 60s of thinking/speaking
+            clearTimeout(stateTimeoutId);
+            if (msg.state === 'thinking' || msg.state === 'speaking' || msg.state === 'transcribing') {
+              stateTimeoutId = setTimeout(() => {
+                avatarFrame.classList.remove('thinking', 'speaking');
+                const statusEl = document.getElementById('ego-state');
+                if (statusEl) statusEl.textContent = 'IDLE (timeout)';
+              }, 60000);
             }
           }
 
@@ -953,8 +979,10 @@
           if (msg.type === 'hub_alert') {
             const tag = msg.tag || '[INFO]';
             const text = msg.text || '';
-            showToast(`${tag} ${text}`);
-            appendLog('ego', `${tag} ${text}`, 'patrol');
+            const alertStr = `${tag} ${text}`;
+            const isError = /failed|error|失敗/i.test(alertStr);
+            showToast(alertStr, isError);
+            appendLog('ego', alertStr, 'patrol');
             const nType = tag.includes('FAIL') || tag.includes('ERROR') ? 'alert' : 'info';
             addNotification({
               type: nType,
@@ -984,14 +1012,15 @@
             const overlay = document.createElement('div');
             overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;-webkit-app-region:no-drag';
             overlay.innerHTML = `<div style="background:rgba(0,20,30,0.95);border:1px solid var(--neon-cyan);padding:30px;max-width:400px;text-align:center;border-radius:4px;">
-              <div style="color:var(--neon-cyan);margin-bottom:15px;font-size:13px;">${msg.message}</div>
+              <div style="color:var(--neon-cyan);margin-bottom:15px;font-size:14px;">${msg.message}</div>
               <div style="display:flex;gap:15px;justify-content:center;">
                 <button id="confirm-yes" style="background:var(--neon-cyan);color:#000;border:none;padding:8px 20px;cursor:pointer;">はい</button>
                 <button id="confirm-no" style="background:transparent;color:var(--neon-cyan);border:1px solid var(--neon-cyan);padding:8px 20px;cursor:pointer;">いいえ</button>
               </div>
             </div>`;
             document.body.appendChild(overlay);
-            overlay.querySelector('#confirm-yes').onclick = () => {
+            const confirmYesBtn = overlay.querySelector('#confirm-yes');
+            confirmYesBtn.onclick = () => {
               ws.send(JSON.stringify({ type: 'confirm_action', action_id: msg.action_id, confirmed: true }));
               overlay.remove();
             };
@@ -999,6 +1028,7 @@
               ws.send(JSON.stringify({ type: 'confirm_action', action_id: msg.action_id, confirmed: false }));
               overlay.remove();
             };
+            confirmYesBtn.focus();
           }
 
           if (msg.type === 'tts_error') {
@@ -1011,7 +1041,8 @@
       };
       ws.onclose = () => {
         showToast('Canon から切断されました。再接続します…');
-        setTimeout(connect, 3000);
+        setTimeout(connect, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, 30000);
       };
       ws.onerror = (err) => {
         console.error("WS Error:", err);
@@ -1109,6 +1140,7 @@
     // ===== Bottom Notification Panel =====
     let bottomPanelOpen = false;
     let notifications = [];
+    let hasUnreadErrors = false;
 
     function toggleBottomPanel() {
       bottomPanelOpen = !bottomPanelOpen;
@@ -1117,6 +1149,8 @@
       if (bottomPanelOpen) {
         panel.classList.add('open');
         badge.style.display = 'none';
+        badge.classList.remove('badge-error');
+        hasUnreadErrors = false;
         notifications.forEach(n => n.read = true);
       } else {
         panel.classList.remove('open');
@@ -1134,14 +1168,20 @@
           badge.textContent = unread;
           badge.style.display = 'inline-block';
         }
+        if (item.type === 'failed' || item.type === 'cli_failed' || item.type === 'alert') {
+          hasUnreadErrors = true;
+          badge.classList.add('badge-error');
+        }
       }
     }
 
     function clearNotifications() {
       notifications = [];
+      hasUnreadErrors = false;
       _renderNotifications();
       const badge = document.getElementById('notifBadge');
       badge.style.display = 'none';
+      badge.classList.remove('badge-error');
     }
 
     function _renderNotifications() {

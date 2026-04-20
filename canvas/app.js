@@ -66,6 +66,9 @@ function startDraw(e) {
     ctx.strokeStyle = currentTool === 'erase' ? '#0a0a14' : color;
     if (currentTool === 'erase') {
         ctx.globalCompositeOperation = 'destination-out';
+    } else if (currentTool === 'feedback') {
+        ctx.strokeStyle = '#ff3366'; // Red for feedback
+        ctx.globalCompositeOperation = 'source-over';
     } else {
         ctx.globalCompositeOperation = 'source-over';
     }
@@ -164,8 +167,10 @@ document.getElementById('btn-generate').onclick = () => {
 
         ws.send(JSON.stringify({
             type: 'canvas_generate',
+            domain: 'manga',
             prompt: prompt,
-            image_b64: image_b64
+            image_b64: image_b64,
+            is_feedback: currentTool === 'feedback'
         }));
         showToast("Sending sketch to Canon...");
 

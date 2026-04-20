@@ -22,7 +22,6 @@
             color: white;
             font-family: 'M PLUS Rounded 1c', sans-serif;
             overflow: hidden;
-            /* Prevent body scroll, we'll scroll the container */
             display: flex;
             flex-direction: column;
             height: 100vh;
@@ -61,6 +60,17 @@
 
         .btn.secondary {
             background: #555;
+        }
+
+        /* [B] タップテンポ — 連打中は光る */
+        #tap-btn {
+            background: #2a5298;
+            min-width: 80px;
+        }
+
+        #tap-btn.tapping {
+            background: #4a72c8;
+            box-shadow: 0 0 12px #4a72c8;
         }
 
         #viewer-container {
@@ -120,6 +130,14 @@
             color: var(--accent);
         }
 
+        /* [D] タイマー表示 */
+        #timer-display {
+            font-size: 1.1rem;
+            color: #aef;
+            min-width: 55px;
+            text-align: center;
+        }
+
         .canon-badge {
             display: flex;
             align-items: center;
@@ -145,6 +163,13 @@
             align-items: center;
             z-index: 2000;
         }
+
+        /* [A] ショートカットヒント */
+        .shortcut-hint {
+            font-size: 0.65rem;
+            opacity: 0.4;
+            margin-left: 4px;
+        }
     </style>
 </head>
 
@@ -153,17 +178,18 @@
 
     <header>
         <div class="canon-badge">
-            <!-- Image placeholder, will try to load if exists -->
-            <div
-                style="width:30px; height:30px; background:var(--accent); border-radius:50%; display:flex; justify:center; align:center">
+            <div style="width:30px; height:30px; background:var(--accent); border-radius:50%; display:flex; justify-content:center; align-items:center">
                 C</div>
             <span>カノンと猛練習モード！</span>
         </div>
         <div class="controls">
-            <div>BPM: <input type="range" id="bpm-slider" min="40" max="220" value="95"> <span
-                    id="bpm-display">95</span></div>
-            <button id="scroll-toggle" class="btn">▶ START</button>
-            <button id="reset-btn" class="btn secondary">RESET</button>
+            <div>BPM: <input type="range" id="bpm-slider" min="40" max="220" value="95"> <span id="bpm-display">95</span></div>
+            <!-- [B] タップテンポ -->
+            <button id="tap-btn" class="btn">TAP<span class="shortcut-hint">T</span></button>
+            <!-- [D] タイマー -->
+            <span id="timer-display">0:00</span>
+            <button id="scroll-toggle" class="btn">▶ START<span class="shortcut-hint">Space</span></button>
+            <button id="reset-btn" class="btn secondary">RESET<span class="shortcut-hint">R</span></button>
         </div>
     </header>
 
@@ -188,7 +214,6 @@
         let pdfDoc = null;
         let isScrolling = false;
         let bpm = 95;
-        let scrollSpeed = 0; // pixels per frame
         let lastTimestamp = 0;
         const container = document.getElementById('viewer-container');
         const wrapper = document.getElementById('canvas-wrapper');
@@ -200,8 +225,89 @@
         let audioCtx = null;
         let nextBeatTime = 0;
         let beatCount = 0;
-        const lookahead = 25.0; // ms
         const scheduleAheadTime = 0.1; // sec
+
+        // [D] タイマー
+        let sessionStartTime = null;   // Date.now() at first START
+        let accumulatedMs = 0;         // ms accumulated across pauses
+        let pauseStartTime = null;     // Date.now() when paused
+        let timerInterval = null;
+
+        function formatTime(ms) {
+            const totalSec = Math.floor(ms / 1000);
+            const min = Math.floor(totalSec / 60);
+            const sec = totalSec % 60;
+            return `${min}:${sec.toString().padStart(2, '0')}`;
+        }
+
+        function startTimer() {
+            sessionStartTime = sessionStartTime ?? Date.now();
+            if (pauseStartTime !== null) {
+                // Resume: add paused gap to accumulated
+                accumulatedMs += Date.now() - pauseStartTime;
+                pauseStartTime = null;
+            }
+            timerInterval = setInterval(() => {
+                const elapsed = accumulatedMs + (Date.now() - sessionStartTime);
+                document.getElementById('timer-display').innerText = formatTime(elapsed);
+            }, 500);
+        }
+
+        function pauseTimer() {
+            clearInterval(timerInterval);
+            pauseStartTime = Date.now();
+        }
+
+        function resetTimer() {
+            clearInterval(timerInterval);
+            sessionStartTime = null;
+            accumulatedMs = 0;
+            pauseStartTime = null;
+            document.getElementById('timer-display').innerText = '0:00';
+        }
+
+        function getTotalMs() {
+            if (sessionStartTime === null) return 0;
+            const running = pauseStartTime === null ? (Date.now() - sessionStartTime) : 0;
+            return accumulatedMs + running;
+        }
+
+        // [B] タップテンポ
+        const tapBtn = document.getElementById('tap-btn');
+        let tapTimes = [];
+        let tapResetTimeout = null;
+
+        tapBtn.onclick = () => {
+            const now = performance.now();
+            tapTimes.push(now);
+
+            // 2秒以上間が空いたらリセット扱い
+            if (tapTimes.length > 1 && now - tapTimes[tapTimes.length - 2] > 2000) {
+                tapTimes = [now];
+            }
+
+            // 最大8打分で計算
+            if (tapTimes.length > 8) tapTimes.shift();
+
+            if (tapTimes.length >= 2) {
+                const intervals = [];
+                for (let i = 1; i < tapTimes.length; i++) {
+                    intervals.push(tapTimes[i] - tapTimes[i - 1]);
+                }
+                const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+                bpm = Math.round(60000 / avgInterval);
+                bpm = Math.max(40, Math.min(220, bpm));
+                bpmSlider.value = bpm;
+                bpmDisplay.innerText = bpm;
+            }
+
+            tapBtn.classList.add('tapping');
+            clearTimeout(tapResetTimeout);
+            tapResetTimeout = setTimeout(() => {
+                tapBtn.classList.remove('tapping');
+                tapTimes = [];
+            }, 2000);
+        };
 
         // WebSocket to Canon
         let ws = null;
@@ -210,7 +316,7 @@
             ws = new WebSocket(`ws://${host}:8082`);
             ws.onopen = () => {
                 document.getElementById('status-text').innerText = 'カノンと同期中...';
-                ws.send(json.stringify({ type: 'log', message: 'ギター練習モードを起動したよ！マリーゴールドを頑張ろうね。', voice: true }));
+                ws.send(JSON.stringify({ type: 'log', message: 'ギター練習モードを起動したよ！マリーゴールドを頑張ろうね。', voice: true }));
             };
             ws.onclose = () => {
                 document.getElementById('status-text').innerText = 'OFFLINE (Canon disconnected)';
@@ -218,12 +324,25 @@
             };
         }
 
-        function json(obj) { return JSON.stringify(obj); }
+        // [F] セッションログ送信
+        function sendSessionLog() {
+            const totalMs = getTotalMs();
+            if (totalMs < 5000) return; // 5秒未満は記録しない
+            const totalMin = Math.round(totalMs / 60000 * 10) / 10;
+            const payload = {
+                type: 'guitar_session',
+                bpm,
+                duration_min: totalMin,
+                timestamp: new Date().toISOString(),
+                message: `練習セッション終了。BPM ${bpm}、${totalMin}分間練習したよ！`,
+                voice: true,
+            };
+            ws?.send(JSON.stringify(payload));
+        }
 
         // PDF Loading
         async function loadPDF() {
             try {
-                // Try score.pdf in the same dir
                 pdfDoc = await pdfjsLib.getDocument('score.pdf').promise;
                 for (let i = 1; i <= pdfDoc.numPages; i++) {
                     const page = await pdfDoc.getPage(i);
@@ -236,27 +355,13 @@
                     wrapper.appendChild(canvas);
                 }
                 document.getElementById('loading').style.display = 'none';
-                calibrateSpeed();
             } catch (err) {
                 console.error(err);
                 document.getElementById('loading').innerText = '❌ 譜面 (score.pdf) が見つからないよ。フォルダを確認してね。';
             }
         }
 
-        function calibrateSpeed() {
-            // Estimate speed based on BPM. This is a heuristic.
-            // 4 beats (~1 measure) is roughly 25% of a page height? 
-            // In a typical guitar score (6 lines per page), 1 line = ~4 measures.
-            // Let's assume 1 page = 24 measures. 1 measure = height / 24.
-            const totalHeight = wrapper.offsetHeight;
-            const measuresPerPage = 24; // Average
-            const pixelsPerMeasure = (totalHeight / pdfDoc.numPages) / measuresPerPage;
-
-            // Speed = (BPM / 4) * pixelsPerMeasure / 60 seconds / 60 fps
-            scrollSpeed = (bpm / 4) * pixelsPerMeasure / (60 * 60);
-        }
-
-        // Metronome logic
+        // Metronome
         function scheduler() {
             while (nextBeatTime < audioCtx.currentTime + scheduleAheadTime) {
                 playBeat(nextBeatTime);
@@ -284,7 +389,6 @@
             osc.start(time);
             osc.stop(time + 0.1);
 
-            // Visual update (use setTimeout for visual sync, though not perfect)
             setTimeout(() => {
                 document.querySelectorAll('.beat-dot').forEach(d => d.classList.remove('active'));
                 document.getElementById(`dot-${beatCount}`).classList.add('active');
@@ -296,10 +400,6 @@
 
             if (lastTimestamp) {
                 const diff = timestamp - lastTimestamp;
-                // scroll amount proportional to BPM
-                // Adjust calibration: 1 page usually covers 16-24 measures.
-                // 1 measure = approx 200px at scale=2.
-                // Scroll px per ms = (bpm / 60 / 4) * 200 / 1000?
                 const pxPerMs = (bpm / 60 / 4) * 350 / 1000;
                 container.scrollBy(0, pxPerMs * diff);
             }
@@ -314,31 +414,58 @@
             isScrolling = !isScrolling;
             if (isScrolling) {
                 scrollBtn.innerText = '⏸ PAUSE';
+                scrollBtn.querySelector('.shortcut-hint').innerText = 'Space';
                 scrollBtn.classList.add('secondary');
                 lastTimestamp = 0;
                 nextBeatTime = audioCtx.currentTime;
                 beatCount = 0;
+                startTimer(); // [D]
                 requestAnimationFrame(scrollLoop);
-                ws?.send(json({ type: 'log', message: `マリーゴールドの練習を開始したよ！BPMは${bpm}に設定中。`, voice: true }));
+                ws?.send(JSON.stringify({ type: 'log', message: `マリーゴールドの練習を開始したよ！BPMは${bpm}に設定中。`, voice: true }));
             } else {
                 scrollBtn.innerText = '▶ START';
+                scrollBtn.querySelector('.shortcut-hint').innerText = 'Space';
                 scrollBtn.classList.remove('secondary');
-                ws?.send(json({ type: 'log', message: '練習を一時中断したよ。休憩かな？', voice: true }));
+                pauseTimer(); // [D]
+                ws?.send(JSON.stringify({ type: 'log', message: '練習を一時中断したよ。休憩かな？', voice: true }));
             }
         };
 
         resetBtn.onclick = () => {
+            if (isScrolling) {
+                sendSessionLog(); // [F] RESET前にログ送信
+            }
             container.scrollTo(0, 0);
             if (isScrolling) scrollBtn.click();
             beatCount = 0;
             document.querySelectorAll('.beat-dot').forEach(d => d.classList.remove('active'));
+            resetTimer(); // [D]
         };
 
         bpmSlider.oninput = () => {
             bpm = parseInt(bpmSlider.value);
             bpmDisplay.innerText = bpm;
-            calibrateSpeed();
         };
+
+        // [A] キーボードショートカット
+        document.addEventListener('keydown', (e) => {
+            // テキスト入力中は無視
+            if (e.target.tagName === 'INPUT') return;
+
+            if (e.code === 'Space') {
+                e.preventDefault();
+                scrollBtn.click();
+            } else if (e.key === 'r' || e.key === 'R') {
+                resetBtn.click();
+            } else if (e.key === 't' || e.key === 'T') {
+                tapBtn.click();
+            }
+        });
+
+        // [F] ページを閉じる前にもログ送信
+        window.addEventListener('beforeunload', () => {
+            if (isScrolling || getTotalMs() > 5000) sendSessionLog();
+        });
 
         // Init
         loadPDF();

@@ -682,9 +682,9 @@ async def ws_handler(websocket):
                     image_b64 = data.get("image_b64")
                     log.info(f"Canvas Generate Requested: '{prompt}'")
                     asyncio.create_task(play_audio_from_text(f"ラフを受け取ったよ。「{prompt}」だね。生成を開始するよ！"))
-                    await broadcast_ws({"type": "hub_toast", "message": "Draft received by Canon. Standby for Cloud GPU..."})
+                    await broadcast_ws({"type": "hub_toast", "message": "Draft received by Canon. Standby for Cloud GPU (FLUX Manga Fallback)..."})
                     
-                    # Phase 5: Cloud GPU integration
+                    # Phase 5: Cloud GPU integration (FLUX Fallback)
                     async def process_canvas():
                         res_b64 = await runpod_comfyui_generate(prompt, image_b64)
                         if res_b64:
@@ -727,24 +727,32 @@ async def runpod_comfyui_generate(prompt, image_b64):
         "Authorization": f"Bearer {api_key}"
     }
     
-    # Updated FLUX.1-dev workflow using CheckpointLoaderSimple (Node 4) 
-    # to be more resilient to different template structures.
+    # FLUX Manga Fallback: Using img2img since Pony/ControlNet are missing
+    # Auto-injecting Style DNA (FLUX optimized)
+    dna_prefix = "manga style, black and white, screen tones, high contrast, sharp lineart, g-pen, 1girl, petite, "
+    full_prompt = dna_prefix + prompt
+    
     workflow = {
-        "4": {"inputs": {"ckpt_name": "flux1-dev-fp8.safetensors"}, "class_type": "CheckpointLoaderSimple"},
-        "5": {"inputs": {"width": 1024, "height": 1024, "batch_size": 1}, "class_type": "EmptyLatentImage"},
-        "6": {"inputs": {"text": prompt, "clip": ["4", 1]}, "class_type": "CLIPTextEncode"},
-        "8": {"inputs": {"samples": ["13", 0], "vae": ["4", 2]}, "class_type": "VAEDecode"},
-        "9": {"inputs": {"filename_prefix": "CanonGate", "images": ["8", 0]}, "class_type": "SaveImage"},
-        "13": {"inputs": {"noise": ["25", 0], "guider": ["22", 0], "sampler": ["16", 0], "sigmas": ["17", 0], "latent_image": ["5", 0]}, "class_type": "SamplerCustomAdvanced"},
-        "16": {"inputs": {"sampler_name": "euler"}, "class_type": "KSamplerSelect"},
-        "17": {"inputs": {"scheduler": "sgm_uniform", "steps": 20, "denoise": 1, "model": ["4", 0]}, "class_type": "BasicScheduler"},
-        "22": {"inputs": {"model": ["4", 0], "conditioning": ["6", 0]}, "class_type": "BasicGuider"},
-        "25": {"inputs": {"noise_seed": int(time.time())}, "class_type": "RandomNoise"}
+        "1": {"inputs": {"ckpt_name": "flux1-dev-fp8.safetensors"}, "class_type": "CheckpointLoaderSimple"},
+        "2": {"inputs": {"text": full_prompt, "clip": ["1", 1]}, "class_type": "CLIPTextEncode"},
+        "3": {"inputs": {"pixels": ["4", 0], "vae": ["1", 2]}, "class_type": "VAEEncode"},
+        "4": {"inputs": {"image": image_b64}, "class_type": "ETN_LoadImageBase64"}, # Fallback to standard LoadImage if this fails, but usually RunPod has a handler
+        "5": {"inputs": {"width": 1024, "height": 1024, "batch_size": 1}, "class_type": "EmptyLatentImage"}, # Not used for img2img but kept for structure
+        "6": {"inputs": {"seed": int(time.time()), "steps": 20, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple", "denoise": 0.6, "model": ["1", 0], "positive": ["2", 0], "negative": ["2", 0], "latent_image": ["3", 0]}, "class_type": "KSampler"},
+        "7": {"inputs": {"samples": ["6", 0], "vae": ["1", 2]}, "class_type": "VAEDecode"},
+        "8": {"inputs": {"filename_prefix": "CanonManga", "images": ["7", 0]}, "class_type": "SaveImage"}
     }
+    
+    # Optional image mapping for standard LoadImage in Node 4
+    images_mapping = [{'name': 'input_sketch.png', 'image': image_b64}]
+    workflow["4"] = {"inputs": {"image": "input_sketch.png"}, "class_type": "LoadImage"}
     
     payload = {
         "input": {
-            "workflow": workflow
+            "workflow": workflow,
+            "images": [
+                {"name": "input_sketch.png", "image": image_b64}
+            ]
         }
     }
     

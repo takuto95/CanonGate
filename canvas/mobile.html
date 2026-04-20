@@ -225,8 +225,14 @@
     <div id="main-content">
         <div id="chat-box"></div>
         <div id="task-list">
-            <div class="section-title">Next Actions</div>
-            <div id="task-container"></div>
+            <div class="section-title">Manga Control</div>
+            <div style="display:flex; gap:10px; margin-bottom:15px;">
+                <button class="task-btn" onclick="setTool('draw')">描画</button>
+                <button class="task-btn" style="background:#ff3366" onclick="setTool('feedback')">赤入れ (修正)</button>
+                <button class="task-btn" onclick="clearCanvas()">クリア</button>
+            </div>
+            <input type="text" id="manga-prompt" placeholder="プロンプト（例: カノンのアップ）" style="width:100%; padding:10px; margin-bottom:10px; background:#222; border:1px solid #444; color:#fff;">
+            <button class="task-btn execute" style="width:100%; padding:12px;" onclick="requestGenerate()">✨ 清書依頼 (Xiaomi -> Canon)</button>
         </div>
     </div>
     <div id="input-area">
@@ -339,8 +345,24 @@
             }
         }
 
-        sendBtn.onclick = send;
-        input.onkeydown = (e) => { if (e.key === 'Enter') send(); };
+        function setTool(t) {
+            if (window.parent && window.parent.setTool) {
+                window.parent.setTool(t);
+            } else if (typeof setTool === 'function') {
+                setTool(t);
+            }
+        }
+
+        function clearCanvas() {
+            if (typeof clearCanvas === 'function') clearCanvas();
+        }
+
+        function requestGenerate() {
+            const p = document.getElementById('manga-prompt').value;
+            if (typeof requestGenerate === 'function') {
+                requestGenerate(p);
+            }
+        }
 
         connect();
     </script>

@@ -12,3 +12,13 @@ build/
 .DS_Store
 *.zip
 system_reports/
+*.png
+*.jpg
+*.jpeg
+*.safetensors
+*.ckpt
+*.pt
+*.bin
+output_flux.png
+tmp/
+logs/

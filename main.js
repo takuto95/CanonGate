@@ -14,6 +14,7 @@ app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('disable-gpu');
 
 let pythonProcess = null;
+let brainProcess = null;
 let mainWin = null;
 // Simplified load logic (Simple Mode only)
 function loadSimpleMode() {
@@ -96,11 +97,31 @@ function createWindow() {
     pythonProcess.on('close', (code) => {
         console.log(`Python process exited with code ${code}`);
     });
+
+    setTimeout(() => {
+        const brainArgs = ['canon_brain.py'];
+        const domainIdx2 = process.argv.indexOf('--domain');
+        if (domainIdx2 !== -1 && process.argv[domainIdx2 + 1]) {
+            brainArgs.push('--domain', process.argv[domainIdx2 + 1]);
+        }
+        console.log('[Electron] Starting Canon Brain...');
+        brainProcess = spawn(pythonCmd, brainArgs, {
+            cwd: __dirname,
+            stdio: 'inherit',
+            env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' }
+        });
+        brainProcess.on('error', (err) => console.error('[Brain] Failed to spawn:', err));
+        brainProcess.on('close', (code) => console.log(`[Brain] exited with code ${code}`));
+    }, 3000);
 }
 
 app.whenReady().then(createWindow);
 
 app.on('will-quit', () => {
+    if (brainProcess) {
+        brainProcess.kill();
+        brainProcess = null;
+    }
     if (pythonProcess) {
         pythonProcess.kill();
         pythonProcess = null;

@@ -29,7 +29,10 @@ from datetime import datetime
 from pathlib import Path
 from faster_whisper import WhisperModel
 import argparse
-from kokoro_onnx import Kokoro
+try:
+    from kokoro_onnx import Kokoro
+except ImportError:
+    Kokoro = None
 import scipy.io.wavfile as wavfile
 import io
 
@@ -356,6 +359,7 @@ def _load_canon_brain_context(domain: str) -> str:
 
     return "\n".join(brain_parts)
 CONNECTED_CLIENTS = set()
+BRAIN_CLIENT = None  # WebSocket connection from Canon Brain
 _daily_dashboard: "DailyDashboardAggregator | None" = None  # ADR-0192
 
 # Hallucination Filter
@@ -511,30 +515,83 @@ def audio_callback(indata, frames, time, status):
             log.debug(f"[Barge-in] triggered rms={rms:.4f} threshold={VAD_RMS_THRESHOLD * BARGEIN_RMS_MULTIPLIER:.4f}")
 
 async def ws_handler(websocket):
+    global BRAIN_CLIENT, USER_RECORDING, VOICE_SESSION_ACTIVE, MUTED
     log.info("WS Client connected")
     CONNECTED_CLIENTS.add(websocket)
-    # 接続直後にタスク一覧を送り、仕事/生活の一覧がすぐ出るようにする
-    asyncio.create_task(manual_task_sync())
-    # if len(CONNECTED_CLIENTS) == 1:
-    #    asyncio.create_task(play_audio_from_text("接続したよ。画面を一度クリックすると、私の声が聞こえるよ。"))
+    # Brain未接続時のみ自前でタスク同期（Brain接続時はBrainが担当）
+    if BRAIN_CLIENT is None:
+        asyncio.create_task(manual_task_sync())
     try:
         async for message in websocket:
             try:
                 data = json.loads(message)
+
+                # --- Brain identification & relay ---
+                if data.get("type") == "brain_status" and data.get("state") == "connected":
+                    BRAIN_CLIENT = websocket
+                    log.info("Canon Brain identified and connected")
+                    await broadcast_ws_except(data, websocket)
+                    continue
+
+                # Messages FROM Brain → relay to UI clients + special handling
+                if websocket == BRAIN_CLIENT:
+                    msg_type = data.get("type", "")
+
+                    # brain_dialogue_response: feed TTS queue + relay to UI
+                    if msg_type == "brain_dialogue_response":
+                        if data.get("stream_chunk"):
+                            text = data.get("text", "").strip()
+                            if text and len(text) > 1:
+                                TTS_QUEUE.put_nowait(text)
+                        if data.get("stream_done"):
+                            full_text = data.get("full_text", "")
+                            await broadcast_ws_except(
+                                {"type": "chat", "who": "ego", "text": full_text, "tag": "chat"},
+                                websocket,
+                            )
+                            await broadcast_ws_except({"type": "state", "state": "listening"}, websocket)
+                        continue
+
+                    # Voice request from Brain: play TTS
+                    if msg_type == "log" and data.get("voice"):
+                        voice_msg = data.get("message", "")
+                        if voice_msg and not MUTED:
+                            asyncio.create_task(play_audio_from_text(voice_msg))
+                        await broadcast_ws_except(data, websocket)
+                        continue
+
+                    # All other Brain messages: relay to UI
+                    await broadcast_ws_except(data, websocket)
+                    continue
+
+                # --- Normal client (Electron UI) messages ---
                 if data.get("type") == "text_input":
                     text = data.get("text")
                     if text:
                         log.info(f"Text Input: {text}")
-                        await INPUT_QUEUE.put({"text": text, "stt_duration": 0})
+                        if BRAIN_CLIENT is not None:
+                            # Route to Brain for Canon-persona dialogue
+                            await broadcast_ws({"type": "chat", "who": "user", "text": text})
+                            await broadcast_ws({"type": "state", "state": "thinking"})
+                            try:
+                                await BRAIN_CLIENT.send(json.dumps({
+                                    "type": "user_input_for_brain",
+                                    "text": text,
+                                    "stt_duration": 0,
+                                }))
+                            except Exception as e:
+                                log.warning(f"Brain send failed, falling back: {e}")
+                                BRAIN_CLIENT = None
+                                await INPUT_QUEUE.put({"text": text, "stt_duration": 0})
+                        else:
+                            await INPUT_QUEUE.put({"text": text, "stt_duration": 0})
                 elif data.get("type") == "start_mic":
-                    global USER_RECORDING
                     USER_RECORDING = True
                     log.debug("UI: MIC START (PTT)")
                 elif data.get("type") == "stop_mic":
                     USER_RECORDING = False
                     log.debug("UI: MIC STOP (PTT)")
                 elif data.get("type") == "start_voice_session":
-                    global VOICE_SESSION_ACTIVE
                     VOICE_SESSION_ACTIVE = True
                     log.info("UI: VOICE SESSION START")
                 elif data.get("type") == "stop_voice_session":
@@ -548,14 +605,25 @@ async def ws_handler(websocket):
                         asyncio.create_task(play_audio_from_text(msg))
                 elif data.get("type") == "refresh_tasks":
                     log.info("UI Requested manual task refresh.")
-                    # 先に state-tech を更新してからタスク同期（Canon work と表示の一致を保つ）
-                    asyncio.create_task(_refresh_tasks_with_state_tech_sync())
+                    if BRAIN_CLIENT is not None:
+                        # Delegate to Brain
+                        try:
+                            await BRAIN_CLIENT.send(json.dumps({"type": "refresh_tasks"}))
+                        except Exception:
+                            asyncio.create_task(_refresh_tasks_with_state_tech_sync())
+                    else:
+                        asyncio.create_task(_refresh_tasks_with_state_tech_sync())
                 elif data.get("type") == "refresh_timeline":
                     log.info("UI Requested timeline refresh.")
-                    if _daily_dashboard is not None:
+                    if BRAIN_CLIENT is not None:
+                        try:
+                            await BRAIN_CLIENT.send(json.dumps({"type": "refresh_timeline"}))
+                        except Exception:
+                            if _daily_dashboard is not None:
+                                asyncio.create_task(_daily_dashboard.refresh())
+                    elif _daily_dashboard is not None:
                         asyncio.create_task(_daily_dashboard.refresh())
                 elif data.get("type") == "mute":
-                    global MUTED
                     MUTED = data.get("value", False)
                     log.info(f"Mute: {MUTED}")
                     # P1: ミュート状態をブラウザに確認通知
@@ -703,7 +771,11 @@ async def ws_handler(websocket):
         pass
     finally:
         CONNECTED_CLIENTS.discard(websocket)
-        log.info("WS Client disconnected")
+        if websocket == BRAIN_CLIENT:
+            BRAIN_CLIENT = None
+            log.warning("Canon Brain disconnected — falling back to local mode")
+        else:
+            log.info("WS Client disconnected")
 
 async def broadcast_ws(message):
     if not CONNECTED_CLIENTS:
@@ -711,6 +783,17 @@ async def broadcast_ws(message):
     json_msg = json.dumps(message)
     await asyncio.gather(
         *[client.send(json_msg) for client in CONNECTED_CLIENTS],
+        return_exceptions=True
+    )
+
+async def broadcast_ws_except(message, exclude):
+    """Broadcast to all clients EXCEPT the sender (used for Brain relay)."""
+    targets = [c for c in CONNECTED_CLIENTS if c != exclude]
+    if not targets:
+        return
+    json_msg = json.dumps(message)
+    await asyncio.gather(
+        *[client.send(json_msg) for client in targets],
         return_exceptions=True
     )
 
@@ -1206,9 +1289,8 @@ async def mic_monitoring_task(whisper):
             await asyncio.sleep(1)
 
 async def file_watcher_task(filename):
-    """Watch a log file for new lines by polling (open → read new → close).
-    ADR-0119 HUB化: 優先度タグ([URGENT],[SLACK]等)を検知したら即座に音声で割り込む。
-    Windows/同一プロセス書き込みでも追記を確実に検知するため、ファイルを開きっぱなしにしない。
+    """Watch a log file for new lines by polling.
+    When Brain is connected, Brain's Observer handles this — yield.
     """
     log.info(f"File watcher (HUB mode) started: {filename}")
     log_path = Path(__file__).parent / "logs" / filename
@@ -1218,6 +1300,11 @@ async def file_watcher_task(filename):
     last_size = log_path.stat().st_size
 
     while True:
+        # Brain connected → Observer handles file watching
+        if BRAIN_CLIENT is not None:
+            await asyncio.sleep(5)
+            continue
+
         try:
             with open(log_path, 'r', encoding='utf-8') as f:
                 f.seek(last_size)
@@ -1857,20 +1944,16 @@ async def notify_calendar_event(message: str, voice: bool = True):
         await play_audio_from_text(message)
 
 async def heartbeat_task():
-    """ALE (Auto-Loop Engine) 用の死活監視ファイルを更新しつつ、タスクをHUDへ同期する"""
+    """ALE 用の死活監視ファイルを更新。Brain接続時はタスク同期をスキップ（Brainが担当）。"""
     while True:
         try:
-            # 1. Update Heartbeat
             HEARTBEAT_FILE.parent.mkdir(parents=True, exist_ok=True)
             HEARTBEAT_FILE.touch()
-            
-            # 2. Sync Tasks
-            await manual_task_sync()
-            
+            if BRAIN_CLIENT is None:
+                await manual_task_sync()
         except Exception as e:
-            log.warning(f"Heartbeat/TaskSync Error: {e}")
-        
-        await asyncio.sleep(30) # 30秒ごとに更新 (HUDの鮮度を上げる)
+            log.warning(f"Heartbeat Error: {e}")
+        await asyncio.sleep(30)
 
 async def idle_muttering_task():
     """定期的に独り言（Musing）やパトロール報告を生成して report.log に書き込む。
@@ -1896,10 +1979,14 @@ async def idle_muttering_task():
     ]
     
     while True:
-        # 5分から15分の間でランダムに待機 (少し頻度を上げた: 300-900)
+        # 5分から15分の間でランダムに待機
         wait_time = random.randint(300, 900)
         await asyncio.sleep(wait_time)
-        
+
+        # Brain connected → Brain handles musings
+        if BRAIN_CLIENT is not None:
+            continue
+
         if AI_SPEAKING:
             continue
             
@@ -2294,6 +2381,27 @@ async def main_async():
                     await broadcast_ws({"type": "state", "state": "listening"})
                     continue
 
+                # --- Brain Routing: if Brain connected, delegate LLM call ---
+                global SHOULD_INTERRUPT, AI_SPEAKING
+                if BRAIN_CLIENT is not None:
+                    try:
+                        await BRAIN_CLIENT.send(json.dumps({
+                            "type": "user_input_for_brain",
+                            "text": user_text_corrected,
+                            "stt_duration": metrics.get("stt_duration", 0),
+                        }))
+                        log.info("Voice input routed to Brain")
+                        # Brain handles LLM + streams response back via brain_dialogue_response
+                        # which ws_handler catches and feeds TTS queue
+                        AI_SPEAKING = True
+                        await broadcast_ws({"type": "state", "state": "speaking"})
+                        continue  # Skip local Groq/Ollama call
+                    except Exception as e:
+                        log.warning(f"Brain routing failed, falling back to local: {e}")
+                        BRAIN_CLIENT = None
+
+                # --- Fallback: local Groq/Ollama call (Brain not connected) ---
+
                 # RAG Context Injection（技術的な話題のときだけ知識を注入）
                 rag_context = ""
                 if _should_use_rag(user_text_corrected):
@@ -2322,7 +2430,6 @@ async def main_async():
                 full_response = ""
 
                 # Barge-in 用の状態リセット
-                global SHOULD_INTERRUPT, AI_SPEAKING
                 SHOULD_INTERRUPT = False
                 AI_SPEAKING = True
                 await asyncio.sleep(0.3)  # 直前ユーザー音声の余韻がキューに残っている間ウェイト

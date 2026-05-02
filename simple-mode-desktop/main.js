@@ -20,9 +20,11 @@ app.commandLine.appendSwitch('disable-gpu-sandbox');
 app.commandLine.appendSwitch('in-process-gpu');
 
 const SIMPLE_CHAT_PY = path.join(__dirname, '..', 'simple_chat.py');
+const CANON_BRAIN_PY = path.join(__dirname, '..', 'canon_brain.py');
 const ROOT_DIR = path.join(__dirname, '..');
 
 let pythonProcess = null;
+let brainProcess = null;
 /** @type {Electron.BrowserWindow | null} 窓がGCで閉じないよう参照を保持 */
 let mainWindow = null;
 
@@ -82,12 +84,36 @@ function startSimpleChat() {
   });
 }
 
+function startCanonBrain() {
+  const domain = getDomainFromArgv() || 'tech';
+  brainProcess = spawn('python', [CANON_BRAIN_PY, '--domain', domain], {
+    cwd: ROOT_DIR,
+    stdio: 'inherit',
+    env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' }
+  });
+  brainProcess.on('error', (err) => {
+    console.error('canon_brain.py の起動に失敗しました:', err.message);
+  });
+  brainProcess.on('close', (code) => {
+    if (code !== null && code !== 0) {
+      console.log('canon_brain.py 終了 code:', code);
+    }
+    brainProcess = null;
+  });
+}
+
 app.whenReady().then(() => {
   startSimpleChat();
-  setTimeout(createWindow, 2000);
+  // Brain starts 3s after simple_chat.py to ensure WS server is ready
+  setTimeout(startCanonBrain, 3000);
+  setTimeout(createWindow, 4000);
 });
 
 app.on('will-quit', () => {
+  if (brainProcess) {
+    brainProcess.kill();
+    brainProcess = null;
+  }
   if (pythonProcess) {
     pythonProcess.kill();
     pythonProcess = null;

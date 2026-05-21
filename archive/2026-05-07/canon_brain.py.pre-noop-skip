@@ -16,8 +16,6 @@ import json
 import signal
 import logging
 import argparse
-import threading
-import time
 from datetime import datetime
 from pathlib import Path
 
@@ -289,35 +287,12 @@ async def _enact_plan(executor, actions: list[dict]) -> list[dict]:
                 title = str(kwargs.get("title", "auto_task"))[:80]
                 body = str(kwargs.get("body", ""))[:2000]
                 domain = str(kwargs.get("domain", "work"))
-                ret = await method(title=title, body=body, domain=domain)
-                # ret is dict {'path': Path, 'status': 'created'|'exists'}
-                if isinstance(ret, dict) and ret.get("status") == "exists":
-                    results.append({
-                        "action": action_name, "status": "noop",
-                        "reason": "task already exists",
-                        "result": str(ret.get("path", ""))[:200],
-                    })
-                    continue
-                path = ret.get("path") if isinstance(ret, dict) else ret
+                path = await method(title=title, body=body, domain=domain)
             elif action_name == "update_proactive_brief":
                 brief_data = kwargs.get("brief_data", {"alerts": []})
                 if not isinstance(brief_data, dict):
                     brief_data = {"alerts": []}
-                ret = await method(brief_data=brief_data)
-                # ret is 'updated' | 'unchanged' | 'failed'
-                if ret == "unchanged":
-                    results.append({
-                        "action": action_name, "status": "noop",
-                        "reason": "brief content unchanged",
-                    })
-                    continue
-                if ret == "failed":
-                    results.append({
-                        "action": action_name, "status": "error",
-                        "error": "brief update failed",
-                    })
-                    continue
-                path = "ok"
+                path = await method(brief_data=brief_data)
             elif action_name == "record_event":
                 event_type = str(kwargs.get("event_type", "brain_plan"))
                 domain = str(kwargs.get("domain", "auto"))
@@ -527,61 +502,8 @@ class CanonBrain:
                         context = _build_thinker_context(
                             item,
                             dashboard_path=self.config.gtd_dir / "work" / "cross-source-dashboard.json",
-                            active_context_path=self.config.current_state_dir / "active_context.md",
+                            active_context_path=self.config.brain_dir / "current_state" / "active_context.md",
                         )
-
-                        # Per-Task Proposal sweep 分岐: 既存タスクへの提案ドラフト専用。
-                        # Plan/Evaluator/save_analysis を経由せず、proposal markdown を
-                        # drafts/proposal_*.md に書くだけ。
-                        if item.event_type == "proposal_request":
-                            try:
-                                proposal_md = await self.thinker.think_proposal_for_task(
-                                    task_data=item.data, context=context
-                                )
-                                if proposal_md and len(proposal_md.strip()) >= 300:
-                                    task_id = item.data.get("id") or "task"
-                                    task_id_clean = re.sub(r"\.md$", "", str(task_id))
-                                    safe_id = re.sub(r"[^a-zA-Z0-9_.-]", "_", task_id_clean)[:60]
-                                    today_iso = datetime.now().strftime("%Y-%m-%d")
-                                    await self.executor.create_draft(
-                                        title=f"proposal_{today_iso}_{safe_id}",
-                                        content=proposal_md,
-                                    )
-                                    log.info(f"Sweep proposal draft generated ({safe_id})")
-                                else:
-                                    log.info(
-                                        f"Sweep proposal too short "
-                                        f"({len(proposal_md or '')} chars); skipped."
-                                    )
-                            except Exception as _se:
-                                log.error(f"Sweep proposal failed: {_se}", exc_info=True)
-                            continue
-
-                        # Resource Rebalancer 分岐: 専用 thinker メソッドでドラフト生成し
-                        # drafts/resource_plan_*.md に保存。Plan/Evaluator は使わない
-                        # (出力は実行アクションではなく分析markdown)。
-                        if item.event_type == "resource_review_request":
-                            try:
-                                resource_md = await self.thinker.think_resource_review(
-                                    state_summary=item.data, context=context
-                                )
-                                if resource_md and len(resource_md.strip()) >= 200:
-                                    today_iso = datetime.now().strftime("%Y-%m-%d")
-                                    trigger_tag = (item.data.get("trigger", "scheduled") or "scheduled")
-                                    safe_trigger = re.sub(r"[^a-zA-Z0-9_:.-]", "_", str(trigger_tag))[:40]
-                                    await self.executor.create_draft(
-                                        title=f"resource_plan_{today_iso}_{safe_trigger}",
-                                        content=resource_md,
-                                    )
-                                    log.info(f"Resource plan draft generated ({safe_trigger})")
-                                else:
-                                    log.warning(
-                                        f"Resource review output too short ({len(resource_md or '')} chars); skipped."
-                                    )
-                            except Exception as _re:
-                                log.error(f"Resource review failed: {_re}", exc_info=True)
-                            continue
-
                         question = (
                             f"この観測 (urgency={item.urgency}) からtakutoのために"
                             "**自分で先回りで進められるローカル作業**を設計する。"
@@ -610,22 +532,11 @@ class CanonBrain:
                             )
                             if plan_results:
                                 ok_count = sum(1 for r in plan_results if r.get("status") == "ok")
-                                noop_count = sum(1 for r in plan_results if r.get("status") == "noop")
-                                log.info(
-                                    f"Plan enacted: ok={ok_count} noop={noop_count} "
-                                    f"total={len(plan_results)}"
-                                )
+                                log.info(f"Plan enacted: {ok_count}/{len(plan_results)} actions succeeded")
                             # Approved → emit を発信して良い (実行されたので過去形が正しい)
-                            # ただし全アクションが noop ならユーザー通知も抑制 (新規洞察ゼロ)
-                            all_noop = bool(plan_results) and all(
-                                r.get("status") == "noop" for r in plan_results
-                            )
-                            if emit and not all_noop:
+                            if emit:
                                 await self.emitter.send_chat(emit, tag="brain")
                                 await self.emitter.send_voice(emit)
-                            elif all_noop:
-                                log.info("All plan actions were no-ops; suppress emit + skip analysis save.")
-                                emit = ""
                         else:
                             # Rejected → enact をスキップし emit も抑制 (嘘の完了宣言を防ぐ)
                             plan_actions = []
@@ -637,48 +548,6 @@ class CanonBrain:
                             if emit:
                                 log.info("Evaluator rejected. Suppressing emit to prevent false claim.")
                                 emit = ""
-
-                        # Per-Task Proposal 生成: new_task / urgent化したタスクには
-                        # 「選択肢比較+推奨案+論点」の提案ドラフトを別建てで生成し
-                        # drafts/proposal_*.md に保存する。Plan(実行)とProposal(分析)は別物。
-                        proposal_eligible = (
-                            item.event_type == "new_task"
-                            or (
-                                item.event_type == "task_status_change"
-                                and any(
-                                    "→urgent" in k or k.startswith("due_imminent")
-                                    for k in (item.data.get("change_kinds") or [])
-                                )
-                            )
-                        )
-                        if proposal_eligible and eval_approved:
-                            try:
-                                proposal_md = await self.thinker.think_proposal_for_task(
-                                    task_data=item.data, context=context
-                                )
-                                if proposal_md and len(proposal_md.strip()) >= 300:
-                                    task_id = (item.data.get("id") or "task")
-                                    safe_id = re.sub(r"[^a-zA-Z0-9_.-]", "_", str(task_id))[:60]
-                                    today_iso = datetime.now().strftime("%Y-%m-%d")
-                                    await self.executor.create_draft(
-                                        title=f"proposal_{today_iso}_{safe_id}",
-                                        content=proposal_md,
-                                    )
-                                    log.info(f"Per-task proposal draft generated ({safe_id})")
-                                else:
-                                    log.info(
-                                        f"Proposal too short ({len(proposal_md or '')} chars); skipped."
-                                    )
-                            except Exception as _pe:
-                                log.error(f"Proposal generation failed: {_pe}", exc_info=True)
-
-                        # 全アクションが noop なら analysis を保存しない (重複報告抑制)
-                        all_noop = bool(plan_results) and all(
-                            r.get("status") == "noop" for r in plan_results
-                        )
-                        if all_noop:
-                            log.info("Skipping save_analysis (all-noop plan).")
-                            continue
 
                         # 思考結果+評価+実行結果を常にローカルファイルに残す
                         try:
@@ -759,49 +628,7 @@ class CanonBrain:
             await self.ws.close()
 
 
-def _start_parent_watchdog():
-    """CANONGATE_PARENT_PID env var が指す Electron 親プロセスを監視。
-    親が消えたら自身も終了する。Windows ハードクラッシュ時の孤児化防止。"""
-    parent_pid_raw = os.environ.get("CANONGATE_PARENT_PID")
-    if not parent_pid_raw:
-        return
-    try:
-        parent_pid = int(parent_pid_raw)
-    except ValueError:
-        return
-
-    log = logging.getLogger(__name__)
-
-    def _watch():
-        while True:
-            time.sleep(5)
-            alive = False
-            try:
-                if sys.platform == "win32":
-                    import ctypes
-                    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-                    h = ctypes.windll.kernel32.OpenProcess(
-                        PROCESS_QUERY_LIMITED_INFORMATION, False, parent_pid)
-                    if h:
-                        alive = True
-                        ctypes.windll.kernel32.CloseHandle(h)
-                else:
-                    os.kill(parent_pid, 0)
-                    alive = True
-            except (ProcessLookupError, OSError):
-                alive = False
-            except Exception:
-                alive = True
-            if not alive:
-                log.warning(f"Parent process {parent_pid} died; exiting.")
-                os._exit(0)
-
-    t = threading.Thread(target=_watch, daemon=True, name="parent-watchdog")
-    t.start()
-
-
 async def main():
-    _start_parent_watchdog()
     parser = argparse.ArgumentParser(description="Canon Brain - Autonomous intelligence engine")
     parser.add_argument("--domain", choices=["tech", "life"], default="tech")
     parser.add_argument("--ws-url", default=None, help="WebSocket URL to connect to (overrides .env)")

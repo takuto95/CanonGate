@@ -117,14 +117,30 @@ MIC_PREFERRED_PATTERNS = [
     "Realtek",
 ]
 
+# 出力/ループバック系の名前パターン。max_input_channels > 0 でも
+# 実体は出力デバイス(例: Realtek "2nd output with SST")で InputStream を開くと
+# PaErrorCode -9996 (Invalid device) になるため除外する。
+MIC_OUTPUT_BLOCKLIST_KEYWORDS = [
+    "output",
+    "スピーカー",
+    "speaker",
+    "ステレオ ミキサー",
+    "stereo mix",
+    "loopback",
+]
+
 
 def _list_input_devices():
-    """利用可能な入力デバイスを一覧表示し返す。"""
+    """利用可能な入力デバイスを一覧表示し返す。出力/ループバック系は除外。"""
     devices = sd.query_devices()
     input_devices = []
     for i, d in enumerate(devices):
-        if d['max_input_channels'] > 0:
-            input_devices.append((i, d))
+        if d['max_input_channels'] <= 0:
+            continue
+        name_lower = d['name'].lower()
+        if any(kw.lower() in name_lower for kw in MIC_OUTPUT_BLOCKLIST_KEYWORDS):
+            continue
+        input_devices.append((i, d))
     return input_devices
 
 
@@ -2017,7 +2033,48 @@ async def idle_muttering_task():
         except Exception as e:
             log.error(f"Failed to write idle muttering: {e}")
 
+def _start_parent_watchdog():
+    """CANONGATE_PARENT_PID env var が指す Electron 親プロセスを監視。
+    親が消えたら自身も終了する。Windows ではハードクラッシュ時に親死亡シグナルが
+    届かず子プロセスが孤児化してマイク占有ループに陥る問題への対処。"""
+    parent_pid_raw = os.environ.get("CANONGATE_PARENT_PID")
+    if not parent_pid_raw:
+        return
+    try:
+        parent_pid = int(parent_pid_raw)
+    except ValueError:
+        return
+
+    def _watch():
+        while True:
+            time.sleep(5)
+            alive = False
+            try:
+                if sys.platform == "win32":
+                    import ctypes
+                    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+                    h = ctypes.windll.kernel32.OpenProcess(
+                        PROCESS_QUERY_LIMITED_INFORMATION, False, parent_pid)
+                    if h:
+                        alive = True
+                        ctypes.windll.kernel32.CloseHandle(h)
+                else:
+                    os.kill(parent_pid, 0)
+                    alive = True
+            except (ProcessLookupError, OSError):
+                alive = False
+            except Exception:
+                alive = True  # 不明エラーは生存扱い(誤殺回避)
+            if not alive:
+                log.warning(f"Parent process {parent_pid} died; exiting to release mic.")
+                os._exit(0)
+
+    t = threading.Thread(target=_watch, daemon=True, name="parent-watchdog")
+    t.start()
+
+
 async def main_async():
+    _start_parent_watchdog()
     log.info("=== Alter-Ego Voice & Text Chat (Hybrid + Reporter) ===")
     log.info(f"Config: VAD_RMS={VAD_RMS_THRESHOLD}, SILENCE={VAD_SILENCE_DURATION}s, BARGEIN_MUL={BARGEIN_RMS_MULTIPLIER}")
 

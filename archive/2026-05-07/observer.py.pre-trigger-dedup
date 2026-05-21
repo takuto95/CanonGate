@@ -93,17 +93,6 @@ class Observer:
         self._previous_task_ids: set[str] = set()
         # Track per-task state to detect significant changes (sub_lane shift, due-date approach)
         self._previous_task_state: dict[str, dict] = {}
-        # Track previous dashboard summary so the metadata_only fallback only
-        # fires on actual change (avoids 5-min noise from mtime-only refreshes)
-        self._previous_dashboard_summary: dict = {}
-        # Resource review emission cooldown (avoid duplicate proposals)
-        self._last_resource_review_emit: float = 0
-        self._resource_review_cooldown_sec: int = 4 * 3600  # 4h between threshold-driven emits
-        # Morning trigger: track last fired date so we fire once per day
-        self._last_morning_trigger_date: str = ""
-        # Resource review thresholds (configurable)
-        self._urgent_threshold: int = 8
-        self._overdue_threshold: int = 5
 
         # Slack polling state
         self._slack_last_ts: str = ""  # oldest=newest timestamp for incremental polling
@@ -133,8 +122,6 @@ class Observer:
             asyncio.create_task(self._watch_report_log(), name="watch_report_log"),
             asyncio.create_task(self._watch_gtd_files(), name="watch_gtd"),
             asyncio.create_task(self._periodic_task_sync(), name="periodic_task_sync"),
-            asyncio.create_task(self._morning_resource_trigger(), name="morning_resource"),
-            asyncio.create_task(self._proposal_sweep_loop(), name="proposal_sweep"),
         ]
 
         # Slack + external source polling (tech domain only)
@@ -301,181 +288,6 @@ class Observer:
                 event_type="periodic_sync",
                 data={},
             ))
-
-    async def _morning_resource_trigger(self):
-        """Fire a resource_review_request once per weekday morning at 07:00.
-
-        Drives Brain's Resource Rebalancer mode: Brain produces a draft
-        markdown (drops/compresses/handover plan) that takuto reviews
-        before the day starts.
-        """
-        log.info("Morning resource trigger started (07:00 weekdays)")
-        while self._running:
-            now = datetime.now()
-            target = now.replace(hour=7, minute=0, second=0, microsecond=0)
-            if now >= target:
-                target = target + timedelta(days=1)
-            wait = max(60, (target - now).total_seconds())
-            await asyncio.sleep(wait)
-            today_iso = datetime.now().date().isoformat()
-            if today_iso == self._last_morning_trigger_date:
-                continue  # already fired today (e.g. if loop wrapped quickly)
-            # Weekday check (Mon=0..Sun=6); fire on 平日 only
-            if datetime.now().weekday() >= 5:
-                self._last_morning_trigger_date = today_iso
-                continue
-            self._last_morning_trigger_date = today_iso
-            payload = self._build_resource_state_summary(trigger="morning")
-            await self._emit(Observation(
-                source="schedule",
-                event_type="resource_review_request",
-                data=payload,
-            ))
-            log.info(f"Morning resource_review_request emitted ({today_iso})")
-
-    async def _proposal_sweep_loop(self):
-        """Walk current urgent/this_week tasks and emit proposal_request for
-        those without an existing recent proposal in drafts/.
-
-        Runs once at startup (30s settle) and again daily at 06:30 (before the
-        morning resource review at 07:00). Rate-limited at 60s between emits
-        so the LLM is not bombarded.
-        """
-        # Initial settle
-        await asyncio.sleep(30)
-        await self._run_proposal_sweep("startup")
-
-        # Daily 06:30 schedule
-        while self._running:
-            now = datetime.now()
-            target = now.replace(hour=6, minute=30, second=0, microsecond=0)
-            if now >= target:
-                target = target + timedelta(days=1)
-            wait = max(60, (target - now).total_seconds())
-            await asyncio.sleep(wait)
-            if datetime.now().weekday() >= 5:
-                continue  # 週末はスキップ
-            await self._run_proposal_sweep("daily_06_30")
-
-    async def _run_proposal_sweep(self, sweep_trigger: str):
-        """Emit proposal_request events for current urgent/this_week tasks
-        that lack a recent proposal markdown in drafts/.
-        """
-        dashboard = self.config.gtd_dir / "work" / "cross-source-dashboard.json"
-        if not dashboard.exists():
-            log.info(f"Proposal sweep ({sweep_trigger}): dashboard missing; skip.")
-            return
-        try:
-            data = json.loads(dashboard.read_text(encoding="utf-8"))
-        except Exception as e:
-            log.warning(f"Proposal sweep dashboard parse failed: {e}")
-            return
-
-        target_tasks = []
-        for t in (data.get("tasks") or []):
-            if t.get("sub_lane") in ("urgent", "this_week"):
-                target_tasks.append(t)
-
-        if not target_tasks:
-            log.info(f"Proposal sweep ({sweep_trigger}): no urgent/this_week tasks.")
-            return
-
-        # Existing proposal lookup: drafts/ から「過去7日以内の proposal_*_<safe_id>」を
-        # safe_id 単位で集合化。既存があればスキップ。
-        drafts_dir = self.config.drafts_dir
-        existing_safe_ids: set[str] = set()
-        if drafts_dir.exists():
-            cutoff = time.time() - 7 * 86400
-            for f in drafts_dir.glob("*proposal_*.md"):
-                try:
-                    if f.stat().st_mtime < cutoff:
-                        continue
-                except Exception:
-                    continue
-                # filename pattern: {ts}_proposal_<date>_<safe_id>.md
-                # Split off the trailing safe_id chunk after the date segment.
-                m = re.search(r"proposal_\d{4}-\d{2}-\d{2}_(.+)$", f.stem)
-                if m:
-                    # Strip trailing .md to normalize legacy `.md.md` filenames
-                    captured = re.sub(r"\.md$", "", m.group(1))
-                    existing_safe_ids.add(captured)
-
-        emitted = 0
-        skipped_existing = 0
-        max_emit = 8  # 1 sweep あたり上限 (LLM負荷分散)
-        for t in target_tasks:
-            tid = t.get("id") or ""
-            # Strip trailing .md (from next-actions filename ids) to avoid
-            # the resulting draft filename ending in `.md.md`.
-            tid_clean = re.sub(r"\.md$", "", str(tid))
-            safe_id = re.sub(r"[^a-zA-Z0-9_.-]", "_", tid_clean)[:60]
-            if safe_id in existing_safe_ids:
-                skipped_existing += 1
-                continue
-            payload = {
-                "id": tid,
-                "title": (t.get("title") or "")[:200],
-                "sub_lane": t.get("sub_lane", ""),
-                "source": t.get("source", ""),
-                "source_url": t.get("source_url", ""),
-                "due_date": t.get("due_date"),
-                "action_hint": (t.get("action_hint") or "")[:200],
-                "context": (t.get("context") or "")[:200],
-                "is_work": True,
-                "sweep_trigger": sweep_trigger,
-            }
-            await self._emit(Observation(
-                source="schedule",
-                event_type="proposal_request",
-                data=payload,
-            ))
-            emitted += 1
-            if emitted >= max_emit:
-                break
-            # Rate limit between emits to avoid LLM bombardment
-            await asyncio.sleep(60)
-
-        log.info(
-            f"Proposal sweep ({sweep_trigger}) done: emitted={emitted} "
-            f"skipped_existing={skipped_existing} total_targets={len(target_tasks)}"
-        )
-
-    def _build_resource_state_summary(self, trigger: str) -> dict:
-        """Aggregate current task load for the resource review prompt.
-
-        Reads cross-source-dashboard.json for urgent/overdue counts and titles.
-        """
-        dashboard = self.config.gtd_dir / "work" / "cross-source-dashboard.json"
-        urgent_titles: list[str] = []
-        overdue_titles: list[str] = []
-        urgent_count = 0
-        overdue_count = 0
-        if dashboard.exists():
-            try:
-                data = json.loads(dashboard.read_text(encoding="utf-8"))
-                tasks = data.get("tasks") or []
-                today_iso = datetime.now().date().isoformat()
-                for t in tasks:
-                    title = (t.get("title") or "")[:120]
-                    sub_lane = t.get("sub_lane", "")
-                    due = t.get("due_date")
-                    src = t.get("source", "")
-                    label = f"[{src}] {title}" + (f" (due={due})" if due else "")
-                    if sub_lane == "urgent":
-                        urgent_count += 1
-                        urgent_titles.append(label)
-                    if due and str(due) < today_iso:
-                        overdue_count += 1
-                        overdue_titles.append(label)
-            except Exception as e:
-                log.warning(f"Failed to read dashboard for resource summary: {e}")
-        return {
-            "trigger": trigger,
-            "urgent_count": urgent_count,
-            "overdue_count": overdue_count,
-            "urgent_titles": urgent_titles,
-            "overdue_titles": overdue_titles,
-        }
 
     # ------------------------------------------------------------------
     # Task scanning (migrated from simple_chat.py _manual_task_sync_inner)
@@ -703,13 +515,13 @@ class Observer:
                 # Cross-source sync every cycle (5 min)
                 changed = await self._run_cross_source_sync()
                 if changed:
-                    # 2026-05-07: 観測順を反転して個別イベント優先化。
-                    # 旧設計は files_changed を無条件先行 → thinker が
-                    # `{"trigger":"periodic_sync"}` の痩せた context で思考し
-                    # 「住協API確認」等の汎用 Plan を量産していた。
+                    await self._emit(Observation(
+                        source="cross_source",
+                        event_type="files_changed",
+                        data={"trigger": "periodic_sync"},
+                    ))
+                    # Detect newly-appeared task IDs and emit one Observation per task
                     new_tasks = self._detect_new_tasks_from_dashboard()
-                    state_changes = self._detect_task_state_changes()
-
                     for task in new_tasks:
                         await self._emit(Observation(
                             source="cross_source",
@@ -717,6 +529,8 @@ class Observer:
                             data=task,
                             requires_llm=False,
                         ))
+                    # Detect significant state changes on existing tasks
+                    state_changes = self._detect_task_state_changes()
                     for chg in state_changes:
                         await self._emit(Observation(
                             source="cross_source",
@@ -724,61 +538,6 @@ class Observer:
                             data=chg,
                             requires_llm=False,
                         ))
-
-                    # 個別イベントが1件でも出た場合は汎用 files_changed を抑制
-                    # (二重思考防止)。0件のときは「メタデータ変化のみ」として
-                    # サマリ付きで発火するが、前回サマリと差分が無ければ抑制
-                    # (5分ごとの mtime-only 同期によるノイズ思考を防ぐ)。
-                    if not new_tasks and not state_changes:
-                        summary = self._compute_dashboard_summary()
-                        comparable = {k: v for k, v in summary.items() if k != "reason"}
-                        prev_comparable = {
-                            k: v for k, v in self._previous_dashboard_summary.items()
-                            if k != "reason"
-                        }
-                        if comparable != prev_comparable:
-                            self._previous_dashboard_summary = summary
-                            await self._emit(Observation(
-                                source="cross_source",
-                                event_type="files_changed",
-                                data=summary,
-                            ))
-                        else:
-                            log.debug(
-                                "Cross-source dashboard mtime touched but summary unchanged; skip emit."
-                            )
-
-                    # Resource Rebalancer threshold trigger (with cooldown).
-                    # Fires when urgent/overdue exceeds thresholds, capped to
-                    # one emission per cooldown window to avoid spam.
-                    now_ts = time.time()
-                    since_last = now_ts - self._last_resource_review_emit
-                    if since_last >= self._resource_review_cooldown_sec:
-                        urgent_n = sum(
-                            1 for t in (json.loads(
-                                (self.config.gtd_dir / "work" / "cross-source-dashboard.json").read_text(encoding="utf-8")
-                            ).get("tasks") or [])
-                            if t.get("sub_lane") == "urgent"
-                        ) if (self.config.gtd_dir / "work" / "cross-source-dashboard.json").exists() else 0
-                        overdue_n = self._build_resource_state_summary("threshold").get("overdue_count", 0)
-                        trigger_reasons = []
-                        if urgent_n > self._urgent_threshold:
-                            trigger_reasons.append(f"urgent={urgent_n}>{self._urgent_threshold}")
-                        if overdue_n >= self._overdue_threshold:
-                            trigger_reasons.append(f"overdue={overdue_n}>={self._overdue_threshold}")
-                        if trigger_reasons:
-                            payload = self._build_resource_state_summary(
-                                trigger="threshold:" + ",".join(trigger_reasons)
-                            )
-                            await self._emit(Observation(
-                                source="schedule",
-                                event_type="resource_review_request",
-                                data=payload,
-                            ))
-                            self._last_resource_review_emit = now_ts
-                            log.info(
-                                f"Threshold-driven resource_review emitted ({','.join(trigger_reasons)})"
-                            )
 
                 # ClickUp sync every 2nd cycle (10 min)
                 if cycle % 2 == 0 and self.config.clickup_api_token:
@@ -868,30 +627,6 @@ class Observer:
         if changes:
             log.info(f"Detected {len(changes)} task state change(s)")
         return changes
-
-    def _compute_dashboard_summary(self) -> dict:
-        """Build a thin summary used when dashboard mtime changed but
-        no new_task / task_status_change was detected. Gives the thinker a
-        non-empty context (instead of the legacy {"trigger":"periodic_sync"}).
-        """
-        dashboard = self.config.gtd_dir / "work" / "cross-source-dashboard.json"
-        if not dashboard.exists():
-            return {"trigger": "metadata_only", "reason": "dashboard missing"}
-        try:
-            data = json.loads(dashboard.read_text(encoding="utf-8"))
-        except Exception:
-            return {"trigger": "metadata_only", "reason": "dashboard parse failed"}
-        tasks = data.get("tasks") or []
-        urgent_n = sum(1 for t in tasks if t.get("sub_lane") == "urgent")
-        this_week_n = sum(1 for t in tasks if t.get("sub_lane") == "this_week")
-        return {
-            "trigger": "metadata_only",
-            "reason": "dashboard refreshed without task-level change",
-            "urgent_count": urgent_n,
-            "this_week_count": this_week_n,
-            "weekly_you": data.get("weekly_you_count", 0),
-            "weekly_canon": data.get("weekly_canon_count", 0),
-        }
 
     def _detect_new_tasks_from_dashboard(self) -> list[dict]:
         """Compare current dashboard task IDs against the previous snapshot

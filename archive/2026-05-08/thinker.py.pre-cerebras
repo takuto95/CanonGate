@@ -114,17 +114,17 @@ class Thinker:
         # Action tracking
         self._action_counter = 0
 
-        # Groq availability tracker — used by _is_fast_llm_dead() to skip
+        # Groq availability tracker — used by _is_groq_dead() to skip
         # the multi-persona path (3 parallel calls) when Groq TPD is exhausted.
         # Avoids wasting 6+ min on Ollama timeouts when we know all 3 will 429.
-        self._fast_llm_429_timestamps: list[float] = []
-        self._fast_llm_last_success_ts: float = 0.0
-        self._fast_llm_429_threshold = 3            # window 内で N 件 429 → ラッチON
-        self._fast_llm_429_window_sec = 300         # 5min window
-        self._fast_llm_dead_cooldown_sec = 900      # 15min ラッチON継続 (sweep 8回相当)
+        self._groq_429_timestamps: list[float] = []
+        self._groq_last_success_ts: float = 0.0
+        self._groq_429_threshold = 3            # window 内で N 件 429 → ラッチON
+        self._groq_429_window_sec = 300         # 5min window
+        self._groq_dead_cooldown_sec = 900      # 15min ラッチON継続 (sweep 8回相当)
         # ラッチ式: 一度 threshold を満たしたら dead_until に時刻を立て、その時刻
-        # まで _is_fast_llm_dead() は True を返し続ける。Groq 200成功で即座に解除。
-        self._fast_llm_dead_until: float = 0.0
+        # まで _is_groq_dead() は True を返し続ける。Groq 200成功で即座に解除。
+        self._groq_dead_until: float = 0.0
 
     async def think_dialogue(self, user_text: str):
         """Handle user dialogue input. Calls LLM with Canon persona, streams response."""
@@ -149,13 +149,16 @@ class Thinker:
         full_response = ""
         llm_start = time.perf_counter()
 
-        full_response = await self._call_llm_chain(
-            self.history, stream_to_tts=True, label="Dialogue"
-        )
-        if not full_response:
-            log.error("Dialogue: all LLM backends failed")
-            await self.emitter.send_chat("AI応答に失敗しました。", tag="chat")
-            return
+        try:
+            full_response = await self._call_groq_streaming(self.history)
+        except Exception as e:
+            log.warning(f"Groq failed: {e}. Falling back to Ollama.")
+            try:
+                full_response = await self._call_ollama_fallback(self.history)
+            except Exception as fatal_e:
+                log.error(f"Both LLMs failed: {fatal_e}")
+                await self.emitter.send_chat("AI応答に失敗しました。", tag="chat")
+                return
 
         llm_duration = time.perf_counter() - llm_start
         log.info(f"LLM response ({llm_duration:.2f}s): {full_response[:80]}...")
@@ -232,9 +235,24 @@ class Thinker:
         messages = self.context_manager.build_system_prompt(self.domain)
         messages.append({"role": "user", "content": prompt})
 
-        full = await self._call_llm_chain(messages, stream_to_tts=False, label="Proactive thinking")
-        if not full:
-            return "", ""
+        full = ""
+        try:
+            full = await self._call_groq_streaming(messages, stream_to_tts=False)
+        except Exception as e_groq:
+            log.warning(f"Proactive thinking via Groq failed: {e_groq}.")
+            if self.config.anthropic_api_key:
+                try:
+                    full = await self._call_anthropic_streaming(messages, stream_to_tts=False)
+                    log.info("Proactive thinking succeeded via Anthropic fallback.")
+                except Exception as e_anth:
+                    log.warning(f"Anthropic proactive fallback failed: {e_anth}. Trying Ollama.")
+            if not full:
+                try:
+                    full = await self._call_ollama_fallback(messages, stream_to_tts=False)
+                    log.info("Proactive thinking succeeded via Ollama fallback.")
+                except Exception as fe:
+                    log.warning(f"Ollama proactive fallback failed: {fe}")
+                    return "", ""
 
         emit = _extract_emit(full)
         if not emit:
@@ -273,7 +291,7 @@ class Thinker:
         # Ollama timeout 6分/案を浪費しないよう、Groq死亡判定なら single-call へ
         # 自動劣化させる。Groq復活時は次成功で history clear → 自動的に
         # multi-persona 復帰する。
-        if use_multi_persona and self._is_fast_llm_dead():
+        if use_multi_persona and self._is_groq_dead():
             log.info(
                 "Groq currently exhausted (recent 429 cluster); "
                 "skipping multi-persona path, using single-call generator instead."
@@ -345,19 +363,19 @@ class Thinker:
         log.info(f"Proposal retry generated for task '{(task_data or {}).get('title','')[:40]}'")
         return retry
 
-    def _is_fast_llm_dead(self) -> bool:
+    def _is_groq_dead(self) -> bool:
         """Check whether Groq is currently exhausted/unreliable.
 
         ラッチ式: _call_groq_streaming で threshold を満たした瞬間に
-        _fast_llm_dead_until に未来時刻を立てる。その時刻までは True を返す。
-        Groq 200 成功で即時解除 (_fast_llm_dead_until = 0)。
+        _groq_dead_until に未来時刻を立てる。その時刻までは True を返す。
+        Groq 200 成功で即時解除 (_groq_dead_until = 0)。
 
         Used to gate the multi-persona path: we know that with Groq dead, all 3
         parallel persona calls will 429 → Anthropic fail → Ollama timeout
         (6+ min wasted per attempt). Skip multi-persona, use single-call path
         which still has Phase 7 grounding (実証: SEKISUI_CHINTAI-20 で score 9/10).
         """
-        return time.time() < self._fast_llm_dead_until
+        return time.time() < self._groq_dead_until
 
     async def _think_proposal_multi_persona(
         self, task_data: dict, context: str, grounding: str
@@ -436,9 +454,22 @@ class Thinker:
         )
         messages = self.context_manager.build_system_prompt(self.domain)
         messages.append({"role": "user", "content": prompt})
-        full = await self._call_llm_chain(
-            messages, stream_to_tts=False, label=f"Persona[{persona['name']}]"
-        )
+        full = ""
+        try:
+            full = await self._call_groq_streaming(messages, stream_to_tts=False)
+        except Exception as e_groq:
+            log.debug(f"Persona[{persona['name']}] Groq failed: {e_groq}")
+            if self.config.anthropic_api_key:
+                try:
+                    full = await self._call_anthropic_streaming(messages, stream_to_tts=False)
+                except Exception as e_anth:
+                    log.debug(f"Persona[{persona['name']}] Anthropic failed: {e_anth}")
+            if not full:
+                try:
+                    full = await self._call_ollama_fallback(messages, stream_to_tts=False)
+                except Exception as fe:
+                    log.warning(f"Persona[{persona['name']}] all backends failed: {fe}")
+                    return ""
         return full or ""
 
     async def _synthesize_from_personas(
@@ -486,9 +517,22 @@ class Thinker:
         )
         messages = self.context_manager.build_system_prompt(self.domain)
         messages.append({"role": "user", "content": prompt})
-        full = await self._call_llm_chain(
-            messages, stream_to_tts=False, label="Synthesizer"
-        )
+        full = ""
+        try:
+            full = await self._call_groq_streaming(messages, stream_to_tts=False)
+        except Exception as e_groq:
+            log.debug(f"Synthesizer Groq failed: {e_groq}")
+            if self.config.anthropic_api_key:
+                try:
+                    full = await self._call_anthropic_streaming(messages, stream_to_tts=False)
+                except Exception as e_anth:
+                    log.debug(f"Synthesizer Anthropic failed: {e_anth}")
+            if not full:
+                try:
+                    full = await self._call_ollama_fallback(messages, stream_to_tts=False)
+                except Exception as fe:
+                    log.warning(f"Synthesizer all backends failed: {fe}")
+                    return ""
         return full or ""
 
     @staticmethod
@@ -620,9 +664,24 @@ class Thinker:
         messages = self.context_manager.build_system_prompt(self.domain)
         messages.append({"role": "user", "content": prompt})
 
-        full = await self._call_llm_chain(
-            messages, stream_to_tts=False, label="Proposal think"
-        )
+        full = ""
+        try:
+            full = await self._call_groq_streaming(messages, stream_to_tts=False)
+        except Exception as e_groq:
+            log.warning(f"Proposal think via Groq failed: {e_groq}.")
+            if self.config.anthropic_api_key:
+                try:
+                    full = await self._call_anthropic_streaming(messages, stream_to_tts=False)
+                    log.info("Proposal think succeeded via Anthropic fallback.")
+                except Exception as e_anth:
+                    log.warning(f"Anthropic proposal fallback failed: {e_anth}. Trying Ollama.")
+            if not full:
+                try:
+                    full = await self._call_ollama_fallback(messages, stream_to_tts=False)
+                    log.info("Proposal think succeeded via Ollama fallback.")
+                except Exception as fe:
+                    log.warning(f"Ollama proposal fallback failed: {fe}")
+                    return ""
         return full or ""
 
     async def _critique_proposal(self, proposal_md: str, task_data: dict, grounding: str) -> dict:
@@ -669,11 +728,22 @@ class Thinker:
             {"role": "system", "content": "You are a strict proposal critic. Output JSON only. /no_think"},
             {"role": "user", "content": eval_prompt},
         ]
-        full = await self._call_llm_chain(
-            messages, stream_to_tts=False, label="Proposal critic"
-        )
-        if not full:
-            return {"approved": True, "score": 0, "issues": "[critic unavailable; fail-open]", "improvement_hints": ""}
+        full = ""
+        try:
+            full = await self._call_groq_streaming(messages, stream_to_tts=False)
+        except Exception as e_groq:
+            log.warning(f"Critic via Groq failed: {e_groq}")
+            if self.config.anthropic_api_key:
+                try:
+                    full = await self._call_anthropic_streaming(messages, stream_to_tts=False)
+                except Exception as e_anth:
+                    log.warning(f"Critic via Anthropic failed: {e_anth}")
+            if not full:
+                try:
+                    full = await self._call_ollama_fallback(messages, stream_to_tts=False)
+                except Exception as fe:
+                    log.warning(f"Critic via Ollama failed: {fe}")
+                    return {"approved": True, "score": 0, "issues": "[critic unavailable; fail-open]", "improvement_hints": ""}
 
         m = re.search(r"\{[^{}]*\"approved\"[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", full, re.DOTALL)
         if not m:
@@ -766,9 +836,24 @@ class Thinker:
         messages = self.context_manager.build_system_prompt(self.domain)
         messages.append({"role": "user", "content": prompt})
 
-        full = await self._call_llm_chain(
-            messages, stream_to_tts=False, label="Resource review"
-        )
+        full = ""
+        try:
+            full = await self._call_groq_streaming(messages, stream_to_tts=False)
+        except Exception as e_groq:
+            log.warning(f"Resource review via Groq failed: {e_groq}.")
+            if self.config.anthropic_api_key:
+                try:
+                    full = await self._call_anthropic_streaming(messages, stream_to_tts=False)
+                    log.info("Resource review succeeded via Anthropic fallback.")
+                except Exception as e_anth:
+                    log.warning(f"Anthropic resource review fallback failed: {e_anth}. Trying Ollama.")
+            if not full:
+                try:
+                    full = await self._call_ollama_fallback(messages, stream_to_tts=False)
+                    log.info("Resource review succeeded via Ollama fallback.")
+                except Exception as fe:
+                    log.warning(f"Ollama resource review fallback failed: {fe}")
+                    return ""
         return full or ""
 
     async def evaluate_plan(self, raw_response: str, context: str) -> dict:
@@ -812,11 +897,28 @@ class Thinker:
             {"role": "system", "content": "You are a strict critic. Output JSON only. /no_think"},
             {"role": "user", "content": eval_prompt},
         ]
-        full = await self._call_llm_chain(
-            messages, stream_to_tts=False, label="Evaluator"
-        )
-        if not full:
-            return {"approved": True, "scores": {}, "issues": "[evaluator unavailable; fail-open]"}
+        full = ""
+        last_err: Optional[str] = None
+        try:
+            full = await self._call_groq_streaming(messages, stream_to_tts=False)
+        except Exception as e_groq:
+            last_err = f"groq:{type(e_groq).__name__}"
+            log.warning(f"Evaluator via Groq failed: {e_groq}.")
+            if self.config.anthropic_api_key:
+                try:
+                    full = await self._call_anthropic_streaming(messages, stream_to_tts=False)
+                    log.info("Evaluator succeeded via Anthropic fallback.")
+                except Exception as e_anth:
+                    last_err = f"{last_err}/anthropic:{type(e_anth).__name__}"
+                    log.warning(f"Anthropic evaluator fallback failed: {e_anth}. Trying Ollama.")
+            if not full:
+                try:
+                    full = await self._call_ollama_fallback(messages, stream_to_tts=False)
+                    log.info("Evaluator succeeded via Ollama fallback.")
+                except Exception as fe:
+                    last_err = f"{last_err}/ollama:{type(fe).__name__}"
+                    log.warning(f"Ollama evaluator fallback failed: {fe}")
+                    return {"approved": True, "scores": {}, "issues": f"[evaluator unavailable: {last_err}; fail-open]"}
 
         # Extract JSON from response (may have surrounding text)
         m = re.search(r"\{[^{}]*\"approved\"[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", full, re.DOTALL)
@@ -865,136 +967,8 @@ class Thinker:
     # LLM backends
     # ------------------------------------------------------------------
 
-    async def _call_llm_chain(
-        self, messages: list, stream_to_tts: bool = False, label: str = "llm"
-    ) -> str:
-        """Try LLM backends in priority order. Returns first non-empty result.
-
-        Order (2026-05-08): Cerebras (1M/日 free) → Groq (100k/日 free) →
-        Anthropic Haiku (paid fallback) → Ollama (CPU last resort).
-        Cerebras owns the multi-persona availability latch (3 429s in 5min →
-        15min skip). Each tier is skipped if API key is empty.
-
-        Empty string only if ALL tiers fail.
-        """
-        chain: list[tuple[str, callable]] = []
-        if self.config.cerebras_api_key:
-            chain.append(("Cerebras", self._call_cerebras_streaming))
-        if self.config.groq_api_key:
-            chain.append(("Groq", self._call_groq_streaming))
-        if self.config.anthropic_api_key:
-            chain.append(("Anthropic", self._call_anthropic_streaming))
-        chain.append(("Ollama", self._call_ollama_fallback))
-
-        full = ""
-        first_failure: Optional[tuple[str, str]] = None
-        for name, fn in chain:
-            try:
-                full = await fn(messages, stream_to_tts=stream_to_tts)
-                if full:
-                    if first_failure:
-                        log.info(
-                            f"{label} succeeded via {name} after {first_failure[0]} failed."
-                        )
-                    return full
-            except Exception as e:
-                err = f"{type(e).__name__}: {str(e)[:160]}"
-                if not first_failure:
-                    first_failure = (name, err)
-                log.debug(f"{label} via {name} failed: {err}")
-        # All tiers exhausted
-        last = first_failure or ("none", "no providers")
-        log.warning(f"{label} all backends failed; first={last[0]}: {last[1]}")
-        return ""
-
-    async def _call_cerebras_streaming(self, messages: list, stream_to_tts: bool = True) -> str:
-        """Call Cerebras Cloud (Llama 3.3 70B, ~1M tokens/day free).
-
-        Primary fast LLM since 2026-05-08. Owns the multi-persona availability
-        latch: 429 burst (3 in 5min) → 15min skip-multi-persona window. Groq
-        TPD (100k/日) 飽和問題への対処。Cerebras は 10x quota で実質枯渇しにくい。
-        """
-        if not self.config.cerebras_api_key:
-            raise RuntimeError("Cerebras API key not configured")
-        headers = {
-            "Authorization": f"Bearer {self.config.cerebras_api_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": self.config.cerebras_model,
-            "messages": messages,
-            "stream": True,
-            "temperature": 0.7,
-        }
-
-        def _request():
-            return requests.post(
-                self.config.cerebras_url,
-                headers=headers, json=payload, stream=True,
-                timeout=self.config.cerebras_timeout,
-            )
-
-        resp = await asyncio.to_thread(_request)
-        if resp.status_code != 200:
-            # Track 429s for the multi-persona availability gate (Cerebras is primary)
-            if resp.status_code == 429:
-                now_ts = time.time()
-                self._fast_llm_429_timestamps.append(now_ts)
-                self._fast_llm_429_timestamps = [
-                    t for t in self._fast_llm_429_timestamps
-                    if now_ts - t <= self._fast_llm_429_window_sec
-                ]
-                if len(self._fast_llm_429_timestamps) >= self._fast_llm_429_threshold:
-                    new_dead_until = now_ts + self._fast_llm_dead_cooldown_sec
-                    if new_dead_until > self._fast_llm_dead_until:
-                        self._fast_llm_dead_until = new_dead_until
-                        log.warning(
-                            f"Cerebras 429 threshold hit ({self._fast_llm_429_threshold} in "
-                            f"{self._fast_llm_429_window_sec}s); latching dead until "
-                            f"{datetime.fromtimestamp(self._fast_llm_dead_until).strftime('%H:%M:%S')}."
-                        )
-            raise RuntimeError(f"Cerebras returned {resp.status_code}: {resp.text[:200]}")
-
-        # Successful response — clear latch
-        if self._fast_llm_429_timestamps or self._fast_llm_dead_until:
-            log.info("Cerebras returned 200; clearing 429 history and releasing dead latch.")
-            self._fast_llm_429_timestamps.clear()
-            self._fast_llm_dead_until = 0.0
-        self._fast_llm_last_success_ts = time.time()
-
-        full_response = ""
-        current_sentence = ""
-
-        for line in resp.iter_lines():
-            if not line:
-                continue
-            line_str = line.decode("utf-8").strip()
-            if not line_str.startswith("data: "):
-                continue
-            if line_str == "data: [DONE]":
-                break
-            try:
-                chunk_data = json.loads(line_str[6:])
-                delta = chunk_data["choices"][0]["delta"]
-                if "content" in delta:
-                    content = delta["content"]
-                    full_response += content
-                    current_sentence += content
-                    if stream_to_tts and _should_flush_sentence(current_sentence):
-                        clean = current_sentence.strip()
-                        if len(clean) > 1:
-                            await self.emitter.send_brain_dialogue_response(clean, stream_chunk=True)
-                        current_sentence = ""
-            except Exception:
-                continue
-
-        if current_sentence.strip() and stream_to_tts:
-            await self.emitter.send_brain_dialogue_response(current_sentence.strip(), stream_chunk=True)
-
-        return full_response
-
     async def _call_groq_streaming(self, messages: list, stream_to_tts: bool = True) -> str:
-        """Call Groq API with streaming. Secondary fallback after Cerebras."""
+        """Call Groq API with streaming. Optionally streams chunks to TTS via Emitter."""
         headers = {
             "Authorization": f"Bearer {self.config.groq_api_key}",
             "Content-Type": "application/json",
@@ -1015,7 +989,33 @@ class Thinker:
 
         resp = await asyncio.to_thread(_request)
         if resp.status_code != 200:
+            # Track 429s for the multi-persona availability gate
+            if resp.status_code == 429:
+                now_ts = time.time()
+                self._groq_429_timestamps.append(now_ts)
+                # Trim window
+                self._groq_429_timestamps = [
+                    t for t in self._groq_429_timestamps
+                    if now_ts - t <= self._groq_429_window_sec
+                ]
+                # Latch: window 内で threshold 達成 → cooldown ぶん dead に固定
+                if len(self._groq_429_timestamps) >= self._groq_429_threshold:
+                    new_dead_until = now_ts + self._groq_dead_cooldown_sec
+                    if new_dead_until > self._groq_dead_until:
+                        self._groq_dead_until = new_dead_until
+                        log.warning(
+                            f"Groq 429 threshold hit ({self._groq_429_threshold} in "
+                            f"{self._groq_429_window_sec}s); latching dead until "
+                            f"{datetime.fromtimestamp(self._groq_dead_until).strftime('%H:%M:%S')}."
+                        )
             raise RuntimeError(f"Groq returned {resp.status_code}: {resp.text[:200]}")
+
+        # Successful response — clear 429 history + release latch (Groq healthy)
+        if self._groq_429_timestamps or self._groq_dead_until:
+            log.info("Groq returned 200; clearing 429 history and releasing dead latch.")
+            self._groq_429_timestamps.clear()
+            self._groq_dead_until = 0.0
+        self._groq_last_success_ts = time.time()
 
         full_response = ""
         current_sentence = ""

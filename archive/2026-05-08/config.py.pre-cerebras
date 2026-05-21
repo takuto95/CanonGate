@@ -20,21 +20,7 @@ class BrainConfig:
         self.canon_dir = self.canongate_dir.parent / "Canon"
         self.agent_dir = self.canon_dir / ".agent"
         self.gtd_dir = self.agent_dir / "gtd"
-        # 2026-05-19: .agent/ 構造再編後の新パス。旧 brain/ は memory/ + runtime/ + drafts/ + musings/ + identity/ に分解された。
-        # MIGRATION.md (.agent/) 参照。
-        self.runtime_dir = self.agent_dir / "runtime"
-        self.memory_dir = self.agent_dir / "memory"
-        self.drafts_dir = self.agent_dir / "drafts"
-        self.musings_dir = self.agent_dir / "musings"
-        self.inbox_dir = self.agent_dir / "inbox"
-        self.identity_dir = self.agent_dir / "identity"
-        self.knowledge_dir = self.memory_dir / "knowledge"
-        self.current_state_dir = self.runtime_dir / "current_state"
-        self.events_dir = self.runtime_dir / "events"
-        self.daily_dir = self.runtime_dir / "daily"
-        # 旧 brain_dir は廃止 (2026-05-19)。互換性のため runtime_dir を返すが、
-        # 新コードは個別パス (runtime_dir / memory_dir / drafts_dir 等) を使うこと。
-        self.brain_dir = self.runtime_dir
+        self.brain_dir = self.agent_dir / "brain"
         self.scripts_dir = self.agent_dir / "scripts"
         self.guardian_dir = self.canon_dir / "scripts" / "guardian"
         self.logs_dir = self.canongate_dir / "logs"
@@ -44,17 +30,7 @@ class BrainConfig:
         self.ws_port = int(os.getenv("WS_PORT", "8080"))
         self.ws_url = f"ws://127.0.0.1:{self.ws_port}"
 
-        # Cerebras Cloud (deep reasoning - primary, ~1M tokens/day free)
-        # 2026-05-08 追加。Groq TPD 100k/日 飽和問題への対処。
-        # OpenAI 互換 API、Llama 3.3 70B 同等モデル使用可。
-        self.cerebras_api_key = os.getenv("CEREBRAS_API_KEY", "")
-        self.cerebras_url = os.getenv(
-            "CEREBRAS_URL", "https://api.cerebras.ai/v1/chat/completions"
-        )
-        self.cerebras_model = os.getenv("CEREBRAS_MODEL", "qwen-3-235b-a22b-instruct-2507")
-        self.cerebras_timeout = float(os.getenv("CEREBRAS_TIMEOUT", "30.0"))
-
-        # Groq (deep reasoning - secondary fallback when Cerebras unavailable)
+        # Groq (deep reasoning - primary)
         self.groq_api_key = os.getenv("GROQ_API_KEY", "")
         self.groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
         self.groq_timeout = float(os.getenv("GROQ_TIMEOUT", "10.0"))

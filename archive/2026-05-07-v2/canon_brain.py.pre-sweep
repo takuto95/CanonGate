@@ -16,8 +16,6 @@ import json
 import signal
 import logging
 import argparse
-import threading
-import time
 from datetime import datetime
 from pathlib import Path
 
@@ -527,35 +525,8 @@ class CanonBrain:
                         context = _build_thinker_context(
                             item,
                             dashboard_path=self.config.gtd_dir / "work" / "cross-source-dashboard.json",
-                            active_context_path=self.config.current_state_dir / "active_context.md",
+                            active_context_path=self.config.brain_dir / "current_state" / "active_context.md",
                         )
-
-                        # Per-Task Proposal sweep 分岐: 既存タスクへの提案ドラフト専用。
-                        # Plan/Evaluator/save_analysis を経由せず、proposal markdown を
-                        # drafts/proposal_*.md に書くだけ。
-                        if item.event_type == "proposal_request":
-                            try:
-                                proposal_md = await self.thinker.think_proposal_for_task(
-                                    task_data=item.data, context=context
-                                )
-                                if proposal_md and len(proposal_md.strip()) >= 300:
-                                    task_id = item.data.get("id") or "task"
-                                    task_id_clean = re.sub(r"\.md$", "", str(task_id))
-                                    safe_id = re.sub(r"[^a-zA-Z0-9_.-]", "_", task_id_clean)[:60]
-                                    today_iso = datetime.now().strftime("%Y-%m-%d")
-                                    await self.executor.create_draft(
-                                        title=f"proposal_{today_iso}_{safe_id}",
-                                        content=proposal_md,
-                                    )
-                                    log.info(f"Sweep proposal draft generated ({safe_id})")
-                                else:
-                                    log.info(
-                                        f"Sweep proposal too short "
-                                        f"({len(proposal_md or '')} chars); skipped."
-                                    )
-                            except Exception as _se:
-                                log.error(f"Sweep proposal failed: {_se}", exc_info=True)
-                            continue
 
                         # Resource Rebalancer 分岐: 専用 thinker メソッドでドラフト生成し
                         # drafts/resource_plan_*.md に保存。Plan/Evaluator は使わない
@@ -759,49 +730,7 @@ class CanonBrain:
             await self.ws.close()
 
 
-def _start_parent_watchdog():
-    """CANONGATE_PARENT_PID env var が指す Electron 親プロセスを監視。
-    親が消えたら自身も終了する。Windows ハードクラッシュ時の孤児化防止。"""
-    parent_pid_raw = os.environ.get("CANONGATE_PARENT_PID")
-    if not parent_pid_raw:
-        return
-    try:
-        parent_pid = int(parent_pid_raw)
-    except ValueError:
-        return
-
-    log = logging.getLogger(__name__)
-
-    def _watch():
-        while True:
-            time.sleep(5)
-            alive = False
-            try:
-                if sys.platform == "win32":
-                    import ctypes
-                    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-                    h = ctypes.windll.kernel32.OpenProcess(
-                        PROCESS_QUERY_LIMITED_INFORMATION, False, parent_pid)
-                    if h:
-                        alive = True
-                        ctypes.windll.kernel32.CloseHandle(h)
-                else:
-                    os.kill(parent_pid, 0)
-                    alive = True
-            except (ProcessLookupError, OSError):
-                alive = False
-            except Exception:
-                alive = True
-            if not alive:
-                log.warning(f"Parent process {parent_pid} died; exiting.")
-                os._exit(0)
-
-    t = threading.Thread(target=_watch, daemon=True, name="parent-watchdog")
-    t.start()
-
-
 async def main():
-    _start_parent_watchdog()
     parser = argparse.ArgumentParser(description="Canon Brain - Autonomous intelligence engine")
     parser.add_argument("--domain", choices=["tech", "life"], default="tech")
     parser.add_argument("--ws-url", default=None, help="WebSocket URL to connect to (overrides .env)")

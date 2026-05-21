@@ -127,30 +127,6 @@ class Filter:
                 reason=f"HUB tag: {tag}",
             )
 
-        # Per-task proposal request (sweep over existing urgent/this_week) -> think
-        # Generates a proposal markdown only (no Plan, no GTD task creation).
-        if obs.event_type == "proposal_request":
-            return FilteredItem(
-                source=obs.source,
-                event_type="proposal_request",
-                urgency="medium",
-                action="think",
-                data=obs.data,
-                reason=f"proposal sweep: {obs.data.get('sweep_trigger', 'unknown')}",
-            )
-
-        # Resource review request (morning trigger / threshold-driven) -> think
-        # Generates a resource rebalancing draft markdown.
-        if obs.event_type == "resource_review_request":
-            return FilteredItem(
-                source=obs.source,
-                event_type="resource_review_request",
-                urgency="high",
-                action="think",
-                data=obs.data,
-                reason=f"resource review trigger: {obs.data.get('trigger', 'unknown')}",
-            )
-
         # Cross-source dashboard changes -> think (Backlog/ClickUp変化を先回り分析)
         if obs.event_type == "files_changed" and obs.source == "cross_source":
             return FilteredItem(
@@ -399,20 +375,11 @@ class Filter:
 
     def _is_duplicate(self, item: FilteredItem) -> bool:
         """Check if we recently emitted the same notification."""
-        # Dedup key based on source + event_type + per-item identifier.
-        # 2026-05-07: proposal_request 等で text/content フィールドが無いと
-        # 全件が同一キーで dedup される問題に対処。id/title を優先取得する。
+        # Dedup key based on source + content hash
         key_parts = [item.source, item.event_type]
-        identifier = (
-            item.data.get("id")
-            or item.data.get("content")
-            or item.data.get("text")
-            or item.data.get("title")
-            or item.data.get("trigger")
-            or ""
-        )
-        if identifier:
-            key_parts.append(str(identifier)[:80])
+        content = item.data.get("content", item.data.get("text", ""))
+        if content:
+            key_parts.append(content[:50])
         key = "|".join(key_parts)
 
         now = time.time()

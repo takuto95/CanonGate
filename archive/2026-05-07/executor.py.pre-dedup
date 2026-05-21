@@ -21,13 +21,11 @@ class Executor:
     def __init__(self, config: BrainConfig):
         self.config = config
         # Ensure directories exist
-        # 2026-05-19: .agent/ 再編後の新パス
-        self._drafts_dir = config.drafts_dir
+        self._drafts_dir = config.brain_dir / "drafts"
         self._drafts_dir.mkdir(parents=True, exist_ok=True)
-        # 旧 brain/reports は archive 行き。新規 patrol/analysis は runtime/daily/ に書く
-        self._reports_dir = config.daily_dir
+        self._reports_dir = config.brain_dir / "reports"
         self._reports_dir.mkdir(parents=True, exist_ok=True)
-        self._events_dir = config.events_dir
+        self._events_dir = config.brain_dir / "events"
         self._events_dir.mkdir(parents=True, exist_ok=True)
 
     async def create_draft(self, title: str, content: str) -> Path:
@@ -93,13 +91,8 @@ class Executor:
         log.info(f"Analysis saved: {path}")
         return path
 
-    async def create_gtd_task(self, title: str, body: str = "", domain: str = "work") -> dict:
-        """Create a new GTD task file. Returns {'path': Path, 'status': 'created'|'exists'}.
-
-        2026-05-07: 戻り値を dict 化して enactor 側で no-op を検知できるようにする。
-        既存ファイルへの再生成 (`住協API確認.md` 等) を ok 扱いしていたため、
-        save_analysis が空回り Plan を保存し続けていた問題への対処。
-        """
+    async def create_gtd_task(self, title: str, body: str = "", domain: str = "work") -> Path:
+        """Create a new GTD task file."""
         safe_name = re.sub(r'[\\/:*?"<>|]', "_", title)[:80].strip() or "新規タスク"
         next_dir = self.config.gtd_dir / domain / "next-actions"
         next_dir.mkdir(parents=True, exist_ok=True)
@@ -107,14 +100,14 @@ class Executor:
 
         if task_path.exists():
             log.info(f"Task already exists: {task_path}")
-            return {"path": task_path, "status": "exists"}
+            return task_path
 
         content = f"# {title}\n\n"
         if body:
             content += f"{body}\n"
         task_path.write_text(content, encoding="utf-8")
         log.info(f"GTD task created: {task_path}")
-        return {"path": task_path, "status": "created"}
+        return task_path
 
     async def create_adr(self, title: str, context: str = "") -> Path:
         """Create a new ADR file."""
@@ -166,42 +159,31 @@ class Executor:
 
         log.debug(f"Event recorded: {event_type}")
 
-    async def update_proactive_brief(self, brief_data: dict) -> str:
-        """Update the proactive brief in active_context.md.
-
-        Returns 'updated' | 'unchanged' | 'failed'.
-        2026-05-07: 内容が同じ場合は書き込みをスキップし 'unchanged' を返す。
-        毎周期同じ Brief を再生成するゴミ enactment を no-op として検知させる。
-        """
-        ctx_path = self.config.current_state_dir / "active_context.md"
+    async def update_proactive_brief(self, brief_data: dict):
+        """Update the proactive brief in active_context.md."""
+        ctx_path = self.config.brain_dir / "current_state" / "active_context.md"
         if not ctx_path.exists():
-            return "failed"
+            return
 
         try:
             text = ctx_path.read_text(encoding="utf-8")
-            # Build the new brief block
+            # Update the Proactive Brief section
             brief_text = "\n## Proactive Brief (latest)\n"
             for alert in brief_data.get("alerts", [])[:5]:
                 urgency_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡"}.get(alert.get("urgency", ""), "⚪")
                 brief_text += f"- {urgency_emoji} {alert.get('text_preview', '')[:80]}\n"
-            new_block = brief_text.strip()
 
             if "## Proactive Brief" in text:
+                # Replace existing section
                 start = text.index("## Proactive Brief")
                 end = text.find("\n## ", start + 1)
                 if end == -1:
                     end = len(text)
-                current_block = text[start:end].strip()
-                if current_block == new_block:
-                    log.info("Proactive brief unchanged; skip write.")
-                    return "unchanged"
-                text = text[:start] + new_block + "\n" + text[end:]
+                text = text[:start] + brief_text.strip() + "\n" + text[end:]
             else:
-                text += "\n" + new_block + "\n"
+                text += "\n" + brief_text
 
             ctx_path.write_text(text, encoding="utf-8")
             log.info("Proactive brief updated in active_context.md")
-            return "updated"
         except Exception as e:
             log.warning(f"Failed to update proactive brief: {e}")
-            return "failed"

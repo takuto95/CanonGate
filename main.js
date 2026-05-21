@@ -87,7 +87,7 @@ function createWindow() {
     pythonProcess = spawn(pythonCmd, args, {
         cwd: __dirname,
         stdio: 'inherit',
-        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' }
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1', CANONGATE_PARENT_PID: String(process.pid) }
     });
 
     pythonProcess.on('error', (err) => {
@@ -108,7 +108,7 @@ function createWindow() {
         brainProcess = spawn(pythonCmd, brainArgs, {
             cwd: __dirname,
             stdio: 'inherit',
-            env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' }
+            env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1', CANONGATE_PARENT_PID: String(process.pid) }
         });
         brainProcess.on('error', (err) => console.error('[Brain] Failed to spawn:', err));
         brainProcess.on('close', (code) => console.log(`[Brain] exited with code ${code}`));

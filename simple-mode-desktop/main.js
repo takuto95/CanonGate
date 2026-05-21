@@ -72,7 +72,7 @@ function startSimpleChat() {
   pythonProcess = spawn('python', [SIMPLE_CHAT_PY], {
     cwd: ROOT_DIR,
     stdio: 'inherit',
-    env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+    env: { ...process.env, PYTHONIOENCODING: 'utf-8', CANONGATE_PARENT_PID: String(process.pid) }
   });
   pythonProcess.on('error', (err) => {
     console.error('simple_chat.py の起動に失敗しました:', err.message);
@@ -89,7 +89,7 @@ function startCanonBrain() {
   brainProcess = spawn('python', [CANON_BRAIN_PY, '--domain', domain], {
     cwd: ROOT_DIR,
     stdio: 'inherit',
-    env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' }
+    env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1', CANONGATE_PARENT_PID: String(process.pid) }
   });
   brainProcess.on('error', (err) => {
     console.error('canon_brain.py の起動に失敗しました:', err.message);
